@@ -1,7 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using SimpleApiTester.Domain.Entities;
 
-namespace SimpleApiTester.Application.Operations.Persistence;
+namespace SimpleApiTester.Application.Abstractions.Persistence;
 
 public interface IAppDbContext
 {

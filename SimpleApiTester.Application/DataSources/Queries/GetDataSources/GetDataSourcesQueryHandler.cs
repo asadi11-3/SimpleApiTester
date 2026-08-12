@@ -2,7 +2,7 @@
 
 using MediatR;
 using Microsoft.EntityFrameworkCore;
-using SimpleApiTester.Application.Operations.Persistence;
+using SimpleApiTester.Application.Abstractions.Persistence;
 
 namespace SimpleApiTester.Application.DataSources.Queries.GetDataSources;
 

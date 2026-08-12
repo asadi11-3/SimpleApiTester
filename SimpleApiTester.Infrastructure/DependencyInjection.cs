@@ -1,7 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using SimpleApiTester.Application.Operations.Persistence;
+using SimpleApiTester.Application.Abstractions.Persistence;
 using SimpleApiTester.Infrastructure.Persistence;
 
 namespace SimpleApiTester.Infrastructure

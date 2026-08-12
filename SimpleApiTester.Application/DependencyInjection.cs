@@ -1,5 +1,7 @@
-﻿using FluentValidation;
+using FluentValidation;
+using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using SimpleApiTester.Application.Common.Behaviors;
 
 namespace SimpleApiTester.Application;
 
@@ -14,6 +16,8 @@ public static class DependencyInjection
             config.RegisterServicesFromAssembly(assembly));
 
         services.AddValidatorsFromAssembly(assembly);
+
+        services.AddScoped(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         return services;
     }

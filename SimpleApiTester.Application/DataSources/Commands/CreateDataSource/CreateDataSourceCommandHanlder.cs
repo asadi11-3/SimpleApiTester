@@ -1,12 +1,12 @@
 ﻿using MediatR;
 using Microsoft.EntityFrameworkCore;
-using SimpleApiTester.Application.Operations.Persistence;
+using SimpleApiTester.Application.Abstractions.Persistence;
 using SimpleApiTester.Domain.Entities;
 using System;
 using System.Collections.Generic;
 using System.Text;
 
-    namespace SimpleApiTester.Application.DataSources.Commands.CreateDataSource;
+namespace SimpleApiTester.Application.DataSources.Commands.CreateDataSource;
 
     internal sealed class CreateDataSourceCommandHandler
         : IRequestHandler<CreateDataSourceCommand, Guid>
@@ -22,9 +22,12 @@ using System.Text;
             CreateDataSourceCommand request,
             CancellationToken cancellationToken)
         {
+            var normalizedKey = request.Key.Trim();
+            var normalizedBaseUrl = request.BaseUrl.Trim().TrimEnd('/');
+
             var exists = await _dbContext.DataSources
                 .AnyAsync(
-                    x => x.Key == request.Key,
+                    x => x.Key == normalizedKey,
                     cancellationToken);
 
             if (exists)
@@ -36,8 +39,8 @@ using System.Text;
             var dataSource = new DataSource
             {
                 Id = Guid.NewGuid(),
-                Key = request.Key.Trim(),
-                BaseUrl = request.BaseUrl.TrimEnd('/'),
+                Key = normalizedKey,
+                BaseUrl = normalizedBaseUrl,
                 IsActive = true
             };
 
