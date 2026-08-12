@@ -1,28 +1,38 @@
-﻿using FluentValidation;
-using System;
-using System.Collections.Generic;
-using System.Text;
+using FluentValidation;
 
-namespace SimpleApiTester.Application.Operations.Commands.CreateOperation
-{
-    public sealed class CreateOperationCommandValidator
+namespace SimpleApiTester.Application.Operations.Commands.CreateOperation;
+
+public sealed class CreateOperationCommandValidator
     : AbstractValidator<CreateOperationCommand>
+{
+    public CreateOperationCommandValidator()
     {
-        public CreateOperationCommandValidator()
+        RuleFor(x => x.DataSourceId)
+            .NotEmpty();
+
+        RuleFor(x => x.ApiName)
+            .NotEmpty()
+            .MaximumLength(150);
+
+        RuleFor(x => x.Endpoint)
+            .NotEmpty()
+            .MaximumLength(500)
+            .Must(BeValidEndpoint)
+            .WithMessage("Endpoint must be a relative path.");
+
+        RuleFor(x => x.MethodType)
+            .IsInEnum();
+    }
+
+    private static bool BeValidEndpoint(string endpoint)
+    {
+        var trimmedEndpoint = endpoint.Trim();
+
+        if (string.IsNullOrWhiteSpace(trimmedEndpoint) || trimmedEndpoint.StartsWith("//"))
         {
-            RuleFor(x => x.DataSourceId)
-                .NotEmpty();
-
-            RuleFor(x => x.ApiName)
-                .NotEmpty()
-                .MaximumLength(150);
-
-            RuleFor(x => x.Endpoint)
-                .NotEmpty()
-                .MaximumLength(500);
-
-            RuleFor(x => x.MethodType)
-                .IsInEnum();
+            return false;
         }
+
+        return !Uri.TryCreate(trimmedEndpoint, UriKind.Absolute, out _);
     }
 }

@@ -22,18 +22,23 @@ namespace SimpleApiTester.Application.Operations.Commands.CreateOperation
             CreateOperationCommand request,
             CancellationToken cancellationToken)
         {
-            var dataSourceExists = await _dbContext.DataSources.
-                AnyAsync(x => x.Id == request.DataSourceId, cancellationToken);
+            var dataSourceExists = await _dbContext.DataSources
+                .AnyAsync(x => x.Id == request.DataSourceId, cancellationToken);
 
             if (!dataSourceExists)
+            {
                 throw new KeyNotFoundException("DataSource not found.");
+            }
+
+            var normalizedApiName = request.ApiName.Trim();
+            var normalizedEndpoint = NormalizeEndpoint(request.Endpoint);
 
             var operation = new Operation
             {
                 Id = Guid.NewGuid(),
                 DataSourceId = request.DataSourceId,
-                ApiName = request.ApiName.Trim(),
-                Endpoint = NormalizeEndpoint(request.Endpoint),
+                ApiName = normalizedApiName,
+                Endpoint = normalizedEndpoint,
                 MethodType = request.MethodType,
                 Body = request.Body
             };
@@ -47,11 +52,9 @@ namespace SimpleApiTester.Application.Operations.Commands.CreateOperation
 
         private static string NormalizeEndpoint(string endpoint)
         {
-            endpoint = endpoint.Trim();
+            var trimmedEndpoint = endpoint.Trim();
 
-            return endpoint.StartsWith('/')
-                ? endpoint
-                : "/" + endpoint;
+            return "/" + trimmedEndpoint.TrimStart('/');
         }
     }
 }

@@ -1,10 +1,41 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+using FluentValidation;
 
-namespace SimpleApiTester.Application.Operations.Commands.UpdateOperation
+namespace SimpleApiTester.Application.Operations.Commands.UpdateOperation;
+
+public sealed class UpdateOperationCommandValidator
+    : AbstractValidator<UpdateOperationCommand>
 {
-    internal class UpdateOperationCommandValidator
+    public UpdateOperationCommandValidator()
     {
+        RuleFor(x => x.Id)
+            .NotEmpty();
+
+        RuleFor(x => x.DataSourceId)
+            .NotEmpty();
+
+        RuleFor(x => x.ApiName)
+            .NotEmpty()
+            .MaximumLength(150);
+
+        RuleFor(x => x.Endpoint)
+            .NotEmpty()
+            .MaximumLength(500)
+            .Must(BeValidEndpoint)
+            .WithMessage("Endpoint must be a relative path.");
+
+        RuleFor(x => x.MethodType)
+            .IsInEnum();
+    }
+
+    private static bool BeValidEndpoint(string endpoint)
+    {
+        var trimmedEndpoint = endpoint.Trim();
+
+        if (string.IsNullOrWhiteSpace(trimmedEndpoint) || trimmedEndpoint.StartsWith("//"))
+        {
+            return false;
+        }
+
+        return !Uri.TryCreate(trimmedEndpoint, UriKind.Absolute, out _);
     }
 }

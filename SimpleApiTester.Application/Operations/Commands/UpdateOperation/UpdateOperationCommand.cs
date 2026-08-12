@@ -1,10 +1,12 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+using MediatR;
+using SimpleApiTester.Domain.Enum;
 
-namespace SimpleApiTester.Application.Operations.Commands.UpdateOperation
-{
-    internal class UpdateOperationCommand
-    {
-    }
-}
+namespace SimpleApiTester.Application.Operations.Commands.UpdateOperation;
+
+public sealed record UpdateOperationCommand(
+    Guid Id,
+    Guid DataSourceId,
+    string ApiName,
+    string Endpoint,
+    HttpMethodType MethodType,
+    string? Body) : IRequest;

@@ -5,7 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace SimpleApiTester.Application.Operations.Queries
+namespace SimpleApiTester.Application.Operations.Queries.GetOperationsByDataSource
 {
     internal sealed class GetOperationsByDataSourceQueryHandler
     : IRequestHandler<
@@ -24,7 +24,16 @@ namespace SimpleApiTester.Application.Operations.Queries
             GetOperationsByDataSourceQuery request,
             CancellationToken cancellationToken)
         {
-            return await _dbContext.Operations.AsNoTracking()
+            var dataSourceExists = await _dbContext.DataSources
+                .AnyAsync(x => x.Id == request.DataSourceId, cancellationToken);
+
+            if (!dataSourceExists)
+            {
+                throw new KeyNotFoundException("DataSource not found.");
+            }
+
+            return await _dbContext.Operations
+                .AsNoTracking()
                 .Where(x => x.DataSourceId == request.DataSourceId)
                 .Select(x => new OperationResponse(
                     x.Id,
@@ -34,7 +43,6 @@ namespace SimpleApiTester.Application.Operations.Queries
                     x.MethodType,
                     x.Body))
                 .ToListAsync(cancellationToken);
-       
         }
     }
 }
