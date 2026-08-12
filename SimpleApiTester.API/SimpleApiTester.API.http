@@ -1,0 +1,6 @@
+@SimpleApiTester.API_HostAddress = http://localhost:5215
+
+GET {{SimpleApiTester.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
