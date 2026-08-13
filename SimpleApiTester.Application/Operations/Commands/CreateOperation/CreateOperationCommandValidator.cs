@@ -18,7 +18,7 @@ public sealed class CreateOperationCommandValidator
             .NotEmpty()
             .MaximumLength(500)
             .Must(BeValidEndpoint)
-            .WithMessage("Endpoint must be a relative path.");
+            .WithMessage("Endpoint must be a relative path without a query string.");
 
         RuleFor(x => x.MethodType)
             .IsInEnum();
@@ -29,6 +29,11 @@ public sealed class CreateOperationCommandValidator
         var trimmedEndpoint = endpoint.Trim();
 
         if (string.IsNullOrWhiteSpace(trimmedEndpoint) || trimmedEndpoint.StartsWith("//"))
+        {
+            return false;
+        }
+
+        if (trimmedEndpoint.Contains('?'))
         {
             return false;
         }

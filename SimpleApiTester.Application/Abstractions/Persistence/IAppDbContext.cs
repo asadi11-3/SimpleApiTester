@@ -9,6 +9,8 @@ public interface IAppDbContext
 
     DbSet<Operation> Operations { get; }
 
+    DbSet<QueryParameter> QueryParameters { get; }
+
     Task<int> SaveChangesAsync(
         CancellationToken cancellationToken = default);
 }

@@ -2,6 +2,7 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using SimpleApiTester.Application.Abstractions.Http;
 using SimpleApiTester.Application.Abstractions.Persistence;
+using SimpleApiTester.Domain.Entities;
 
 namespace SimpleApiTester.Application.Operations.Commands.ExecuteOperation;
 
@@ -61,7 +62,13 @@ internal sealed class ExecuteOperationCommandHandler
             throw new InvalidOperationException("Cannot execute an operation for an inactive data source.");
         }
 
-        if (!TryBuildRequestUrl(dataSource.BaseUrl, operation.Endpoint, out var requestUrl))
+        var queryParameters = await _dbContext.QueryParameters
+            .AsNoTracking()
+            .Where(x => x.OperationId == operation.Id && x.IsEnabled)
+            .Select(x => new QueryParameterValue(x.Key, x.Value))
+            .ToListAsync(cancellationToken);
+
+        if (!TryBuildRequestUrl(dataSource.BaseUrl, operation.Endpoint, queryParameters, out var requestUrl))
         {
             return new ExecuteOperationResponse(
                 StatusCode: null,
@@ -85,6 +92,7 @@ internal sealed class ExecuteOperationCommandHandler
     private static bool TryBuildRequestUrl(
         string baseUrl,
         string endpoint,
+        IReadOnlyCollection<QueryParameterValue> queryParameters,
         out string requestUrl)
     {
         requestUrl = string.Empty;
@@ -117,7 +125,29 @@ internal sealed class ExecuteOperationCommandHandler
             return false;
         }
 
-        requestUrl = combinedUri.ToString();
+        requestUrl = BuildFinalUrl(combinedUri, queryParameters);
         return true;
     }
+
+    private static string BuildFinalUrl(
+        Uri uri,
+        IReadOnlyCollection<QueryParameterValue> queryParameters)
+    {
+        if (queryParameters.Count == 0)
+        {
+            return uri.ToString();
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Query = string.Join(
+                "&",
+                queryParameters.Select(x =>
+                    $"{Uri.EscapeDataString(x.Key)}={Uri.EscapeDataString(x.Value ?? string.Empty)}"))
+        };
+
+        return builder.Uri.ToString();
+    }
+
+    private sealed record QueryParameterValue(string Key, string? Value);
 }

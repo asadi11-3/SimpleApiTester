@@ -19,6 +19,8 @@ namespace SimpleApiTester.Infrastructure.Persistence
 
         public DbSet<Operation> Operations => Set<Operation>();
 
+        public DbSet<QueryParameter> QueryParameters => Set<QueryParameter>();
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.ApplyConfigurationsFromAssembly(

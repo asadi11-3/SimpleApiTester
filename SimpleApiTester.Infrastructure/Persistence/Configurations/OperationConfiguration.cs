@@ -29,6 +29,11 @@ namespace SimpleApiTester.Infrastructure.Persistence.Configurations
 
             builder.Property(x => x.Body)
                 .HasColumnType("nvarchar(max)");
+
+            builder.HasMany(x => x.QueryParameters)
+                .WithOne(x => x.Operation)
+                .HasForeignKey(x => x.OperationId)
+                .OnDelete(DeleteBehavior.Cascade);
         }
     }
 }

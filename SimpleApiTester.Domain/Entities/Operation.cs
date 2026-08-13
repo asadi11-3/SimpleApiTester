@@ -19,6 +19,9 @@ namespace SimpleApiTester.Domain.Entities
 
         public string? Body { get; set; }
 
+        public ICollection<QueryParameter> QueryParameters { get; set; }
+            = new List<QueryParameter>();
+
         public DataSource DataSource { get; set; } = null!;
     }
 }

@@ -2,10 +2,6 @@
 using Microsoft.EntityFrameworkCore;
 using SimpleApiTester.Application.Abstractions.Persistence;
 using SimpleApiTester.Domain.Entities;
-using System;
-using System.Collections.Generic;
-using System.Text;
-
 namespace SimpleApiTester.Application.Operations.Commands.CreateOperation
 {
     internal sealed class CreateOperationCommandHandler
