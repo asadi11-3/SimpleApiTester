@@ -33,7 +33,8 @@ public sealed class OperationsController : ControllerBase
                 request.ApiName,
                 request.Endpoint,
                 request.MethodType,
-                request.Body),
+                request.Body,
+                request.ContentType),
             cancellationToken);
 
         return CreatedAtAction(
@@ -79,7 +80,8 @@ public sealed class OperationsController : ControllerBase
                 request.ApiName,
                 request.Endpoint,
                 request.MethodType,
-                request.Body),
+                request.Body,
+                request.ContentType),
             cancellationToken);
 
         return NoContent();

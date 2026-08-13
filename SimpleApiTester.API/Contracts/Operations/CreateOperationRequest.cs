@@ -6,4 +6,5 @@ public sealed record CreateOperationRequest(
     string ApiName,
     string Endpoint,
     HttpMethodType MethodType,
-    string? Body);
+    string? Body,
+    string? ContentType);

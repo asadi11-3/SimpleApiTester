@@ -11,6 +11,7 @@ namespace SimpleApiTester.Application.Operations.Commands.CreateOperation
     string ApiName,
     string Endpoint,
     HttpMethodType MethodType,
-    string? Body
+    string? Body,
+    string? ContentType
 ) : IRequest<Guid>;
 }

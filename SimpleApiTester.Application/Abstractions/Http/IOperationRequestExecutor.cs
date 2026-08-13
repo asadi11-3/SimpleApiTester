@@ -13,4 +13,5 @@ public interface IOperationRequestExecutor
 public sealed record OperationHttpRequest(
     string Url,
     HttpMethodType MethodType,
-    string? Body);
+    string? Body,
+    string? ContentType);

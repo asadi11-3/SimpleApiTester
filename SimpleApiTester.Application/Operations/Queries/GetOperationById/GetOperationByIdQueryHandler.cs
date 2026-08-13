@@ -27,7 +27,8 @@ internal sealed class GetOperationByIdQueryHandler
                 x.ApiName,
                 x.Endpoint,
                 x.MethodType,
-                x.Body))
+                x.Body,
+                x.ContentType))
             .FirstOrDefaultAsync(cancellationToken);
 
         if (operation is null)

@@ -3,4 +3,5 @@
   <Project Path="SimpleApiTester.Application/SimpleApiTester.Application.csproj" />
   <Project Path="SimpleApiTester.Domain/SimpleApiTester.Domain.csproj" />
   <Project Path="SimpleApiTester.Infrastructure/SimpleApiTester.Infrastructure.csproj" />
+  <Project Path="SimpleApiTester.Tests/SimpleApiTester.Tests.csproj" />
 </Solution>

@@ -11,5 +11,6 @@ namespace SimpleApiTester.Application.Operations
     string ApiName,
     string Endpoint,
     HttpMethodType MethodType,
-    string? Body);
+    string? Body,
+    string? ContentType);
 }

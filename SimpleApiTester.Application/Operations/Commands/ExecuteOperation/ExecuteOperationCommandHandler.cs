@@ -33,7 +33,8 @@ internal sealed class ExecuteOperationCommandHandler
                 x.DataSourceId,
                 x.Endpoint,
                 x.MethodType,
-                x.Body
+                x.Body,
+                x.ContentType
             })
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -85,7 +86,8 @@ internal sealed class ExecuteOperationCommandHandler
             new OperationHttpRequest(
                 requestUrl,
                 operation.MethodType,
-                operation.Body),
+                operation.Body,
+                operation.ContentType),
             cancellationToken);
     }
 

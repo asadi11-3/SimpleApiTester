@@ -11,10 +11,7 @@ namespace SimpleApiTester.Infrastructure.Services;
 internal sealed class OperationRequestExecutor : IOperationRequestExecutor
 {
     private const string ClientName = "OperationExecutor";
-    private static readonly MediaTypeHeaderValue JsonMediaType = new("application/json")
-    {
-        CharSet = "utf-8"
-    };
+    private const string DefaultRequestContentType = "application/json";
 
     private readonly IHttpClientFactory _httpClientFactory;
 
@@ -35,10 +32,10 @@ internal sealed class OperationRequestExecutor : IOperationRequestExecutor
                 CreateHttpMethod(request.MethodType),
                 request.Url);
 
-            if (ShouldAttachBody(request.MethodType) && !string.IsNullOrWhiteSpace(request.Body))
+            if (ShouldAttachBody(request.MethodType) && request.Body is not null)
             {
                 requestMessage.Content = new StringContent(request.Body, Encoding.UTF8);
-                requestMessage.Content.Headers.ContentType = JsonMediaType;
+                requestMessage.Content.Headers.ContentType = CreateContentTypeHeader(request.ContentType);
             }
 
             var httpClient = _httpClientFactory.CreateClient(ClientName);
@@ -111,4 +108,20 @@ internal sealed class OperationRequestExecutor : IOperationRequestExecutor
         HttpMethodType.Patch => true,
         _ => false
     };
+
+    private static MediaTypeHeaderValue CreateContentTypeHeader(string? contentType)
+    {
+        var resolvedContentType = string.IsNullOrWhiteSpace(contentType)
+            ? DefaultRequestContentType
+            : contentType;
+
+        var mediaTypeHeader = MediaTypeHeaderValue.Parse(resolvedContentType);
+
+        if (string.IsNullOrWhiteSpace(mediaTypeHeader.CharSet))
+        {
+            mediaTypeHeader.CharSet = Encoding.UTF8.WebName;
+        }
+
+        return mediaTypeHeader;
+    }
 }

@@ -9,4 +9,5 @@ public sealed record UpdateOperationCommand(
     string ApiName,
     string Endpoint,
     HttpMethodType MethodType,
-    string? Body) : IRequest;
+    string? Body,
+    string? ContentType) : IRequest;

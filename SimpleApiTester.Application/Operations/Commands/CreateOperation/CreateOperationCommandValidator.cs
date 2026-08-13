@@ -22,6 +22,10 @@ public sealed class CreateOperationCommandValidator
 
         RuleFor(x => x.MethodType)
             .IsInEnum();
+
+        RuleFor(x => x.ContentType)
+            .Must(ContentTypeRules.IsValid)
+            .WithMessage("ContentType must be a valid media type.");
     }
 
     private static bool BeValidEndpoint(string endpoint)

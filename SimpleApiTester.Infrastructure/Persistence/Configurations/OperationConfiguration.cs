@@ -30,6 +30,9 @@ namespace SimpleApiTester.Infrastructure.Persistence.Configurations
             builder.Property(x => x.Body)
                 .HasColumnType("nvarchar(max)");
 
+            builder.Property(x => x.ContentType)
+                .HasMaxLength(200);
+
             builder.HasMany(x => x.QueryParameters)
                 .WithOne(x => x.Operation)
                 .HasForeignKey(x => x.OperationId)

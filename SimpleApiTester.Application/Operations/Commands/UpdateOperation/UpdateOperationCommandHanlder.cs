@@ -39,6 +39,7 @@ internal sealed class UpdateOperationCommandHandler
         operation.Endpoint = NormalizeEndpoint(request.Endpoint);
         operation.MethodType = request.MethodType;
         operation.Body = request.Body;
+        operation.ContentType = ContentTypeRules.Normalize(request.ContentType);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
