@@ -1,11 +1,21 @@
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 
 namespace SimpleApiTester.API.Infrastructure;
 
 internal sealed class GlobalExceptionHandler : IExceptionHandler
 {
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+
+    private readonly IHostEnvironment _hostEnvironment;
+
+    public GlobalExceptionHandler(IHostEnvironment hostEnvironment)
+    {
+        _hostEnvironment = hostEnvironment;
+    }
+
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext,
         Exception exception,
@@ -15,8 +25,11 @@ internal sealed class GlobalExceptionHandler : IExceptionHandler
         {
             Status = GetStatusCode(exception),
             Title = GetTitle(exception),
-            Detail = exception.Message
+            Detail = GetDetail(exception),
+            Instance = httpContext.Request.Path
         };
+
+        problemDetails.Extensions["traceId"] = httpContext.TraceIdentifier;
 
         if (exception is ValidationException validationException)
         {
@@ -28,8 +41,11 @@ internal sealed class GlobalExceptionHandler : IExceptionHandler
         }
 
         httpContext.Response.StatusCode = problemDetails.Status.Value;
+        httpContext.Response.ContentType = "application/problem+json";
 
-        await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
+        await httpContext.Response.WriteAsync(
+            JsonSerializer.Serialize(problemDetails, SerializerOptions),
+            cancellationToken);
 
         return true;
     }
@@ -49,4 +65,16 @@ internal sealed class GlobalExceptionHandler : IExceptionHandler
         InvalidOperationException => "Conflict",
         _ => "An unexpected error occurred"
     };
+
+    private string GetDetail(Exception exception)
+    {
+        return exception switch
+        {
+            ValidationException => exception.Message,
+            KeyNotFoundException => exception.Message,
+            InvalidOperationException => exception.Message,
+            _ when _hostEnvironment.IsDevelopment() => exception.Message,
+            _ => "An unexpected error occurred while processing the request."
+        };
+    }
 }

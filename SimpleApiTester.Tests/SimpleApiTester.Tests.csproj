@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0-preview.7.25380.108" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.11" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
@@ -21,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SimpleApiTester.Application\SimpleApiTester.Application.csproj" />
+    <ProjectReference Include="..\SimpleApiTester.API\SimpleApiTester.API.csproj" />
     <ProjectReference Include="..\SimpleApiTester.Infrastructure\SimpleApiTester.Infrastructure.csproj" />
   </ItemGroup>
 

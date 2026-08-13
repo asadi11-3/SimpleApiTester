@@ -135,20 +135,19 @@ internal sealed class ExecuteOperationCommandHandler
         Uri uri,
         IReadOnlyCollection<QueryParameterValue> queryParameters)
     {
+        var requestPath = uri.GetLeftPart(UriPartial.Path);
+
         if (queryParameters.Count == 0)
         {
-            return uri.ToString();
+            return requestPath;
         }
 
-        var builder = new UriBuilder(uri)
-        {
-            Query = string.Join(
-                "&",
-                queryParameters.Select(x =>
-                    $"{Uri.EscapeDataString(x.Key)}={Uri.EscapeDataString(x.Value ?? string.Empty)}"))
-        };
+        var queryString = string.Join(
+            "&",
+            queryParameters.Select(x =>
+                $"{Uri.EscapeDataString(x.Key)}={Uri.EscapeDataString(x.Value ?? string.Empty)}"));
 
-        return builder.Uri.ToString();
+        return $"{requestPath}?{queryString}";
     }
 
     private sealed record QueryParameterValue(string Key, string? Value);

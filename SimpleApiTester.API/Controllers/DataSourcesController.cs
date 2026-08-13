@@ -1,5 +1,6 @@
-﻿using MediatR;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using SimpleApiTester.API.Contracts.DataSources;
 using SimpleApiTester.Application.DataSources.Commands.CreateDataSource;
 using SimpleApiTester.Application.DataSources.Commands.DeleteDataSource;
 using SimpleApiTester.Application.DataSources.Commands.UpdateDataSource;
@@ -21,10 +22,12 @@ namespace SimpleApiTester.API.Controllers
 
         [HttpPost]
         public async Task<IActionResult> Create(
-            CreateDataSourceCommand command,
+            CreateDataSourceRequest request,
             CancellationToken cancellationToken)
         {
-            var id = await _sender.Send(command, cancellationToken);
+            var id = await _sender.Send(
+                new CreateDataSourceCommand(request.Key, request.BaseUrl),
+                cancellationToken);
 
             return CreatedAtAction(
                 nameof(GetById),
@@ -58,13 +61,16 @@ namespace SimpleApiTester.API.Controllers
         [HttpPut("{id:guid}")]
         public async Task<IActionResult> Update(
             Guid id,
-            UpdateDataSourceCommand command,
+            UpdateDataSourceRequest request,
             CancellationToken cancellationToken)
         {
-            if (id != command.Id)
-                return BadRequest();
-
-            await _sender.Send(command, cancellationToken);
+            await _sender.Send(
+                new UpdateDataSourceCommand(
+                    id,
+                    request.Key,
+                    request.BaseUrl,
+                    request.IsActive),
+                cancellationToken);
 
             return NoContent();
         }
