@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
@@ -202,6 +203,244 @@ public sealed class SimpleApiTesterApiIntegrationTests
             new { key = "debug", value = "true", isEnabled = true });
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Variable_Create_Get_Update_And_Delete_Work()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var createResponse = await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/variables",
+            new { key = " ApiToken ", value = "secret-value", isEnabled = false });
+
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+        var created = await createResponse.Content.ReadFromJsonAsync<CreatedIdResponse>();
+        Assert.NotNull(created);
+
+        var listResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/variables");
+        var variables = await listResponse.Content.ReadFromJsonAsync<List<VariableDto>>();
+
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        Assert.NotNull(variables);
+        Assert.Single(variables!);
+        Assert.Equal("ApiToken", variables[0].Key);
+        Assert.False(variables[0].IsEnabled);
+
+        var updateResponse = await client.PutAsJsonAsync(
+            $"/api/variables/{created!.Id}",
+            new { key = "ApiToken", value = "updated-value", isEnabled = true });
+
+        Assert.Equal(HttpStatusCode.NoContent, updateResponse.StatusCode);
+
+        var updatedListResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/variables");
+        var updatedVariables = await updatedListResponse.Content.ReadFromJsonAsync<List<VariableDto>>();
+
+        Assert.NotNull(updatedVariables);
+        Assert.Equal("updated-value", updatedVariables![0].Value);
+        Assert.True(updatedVariables[0].IsEnabled);
+
+        var deleteResponse = await client.DeleteAsync($"/api/variables/{created.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+
+        var emptyListResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/variables");
+        var emptyList = await emptyListResponse.Content.ReadFromJsonAsync<List<VariableDto>>();
+
+        Assert.NotNull(emptyList);
+        Assert.Empty(emptyList!);
+    }
+
+    [Fact]
+    public async Task Variable_DuplicateKey_IgnoresCase_WithinSameDataSource()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/variables",
+            new { key = "ApiToken", value = "one", isEnabled = true });
+
+        var duplicateResponse = await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/variables",
+            new { key = "apitoken", value = "two", isEnabled = true });
+
+        Assert.Equal(HttpStatusCode.Conflict, duplicateResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task DataSourceHeader_Create_Get_Update_And_Delete_Work()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var createResponse = await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new
+            {
+                key = " Authorization ",
+                valueSourceType = 1,
+                value = "Bearer token",
+                sourceKey = (string?)null,
+                isEnabled = false
+            });
+
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+        var created = await createResponse.Content.ReadFromJsonAsync<CreatedIdResponse>();
+        Assert.NotNull(created);
+
+        var listResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/headers");
+        var headers = await listResponse.Content.ReadFromJsonAsync<List<HeaderDto>>();
+
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        Assert.NotNull(headers);
+        Assert.Single(headers!);
+        Assert.Equal("Authorization", headers[0].Key);
+        Assert.False(headers[0].IsEnabled);
+
+        var updateResponse = await client.PutAsJsonAsync(
+            $"/api/headers/{created!.Id}",
+            new
+            {
+                key = "Authorization",
+                valueSourceType = 1,
+                value = "Bearer updated",
+                sourceKey = (string?)null,
+                isEnabled = true
+            });
+
+        Assert.Equal(HttpStatusCode.NoContent, updateResponse.StatusCode);
+
+        var updatedListResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/headers");
+        var updatedHeaders = await updatedListResponse.Content.ReadFromJsonAsync<List<HeaderDto>>();
+
+        Assert.NotNull(updatedHeaders);
+        Assert.Equal("Bearer updated", updatedHeaders![0].Value);
+        Assert.True(updatedHeaders[0].IsEnabled);
+
+        var deleteResponse = await client.DeleteAsync($"/api/headers/{created.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Header_DuplicateKeys_AreRejectedWithinSameScope_ButAllowedAcrossScopes()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "Authorization", valueSourceType = 1, value = "one", sourceKey = (string?)null, isEnabled = true });
+
+        var duplicateDataSourceResponse = await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "authorization", valueSourceType = 1, value = "two", sourceKey = (string?)null, isEnabled = true });
+
+        Assert.Equal(HttpStatusCode.Conflict, duplicateDataSourceResponse.StatusCode);
+
+        var operationResponse = await client.PostAsJsonAsync(
+            $"/api/operations/{operationId}/headers",
+            new { key = "authorization", valueSourceType = 1, value = "operation", sourceKey = (string?)null, isEnabled = true });
+
+        Assert.Equal(HttpStatusCode.Created, operationResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Header_ReservedKeys_AreRejected()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "content-type", valueSourceType = 1, value = "application/json", sourceKey = (string?)null, isEnabled = true });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Execute_SendsResolvedHeaders_AndOperationOverrideWins()
+    {
+        using var remote = new RemoteHttpStub
+        {
+            Responder = request => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("ok", Encoding.UTF8, "text/plain")
+            })
+        };
+
+        using var factory = new SimpleApiTesterApiFactory(remote, configurationValues: new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Secrets:ApiKey"] = "secret-456"
+        });
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/variables",
+            new { key = "ApiToken", value = "token-123", isEnabled = true });
+
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "Authorization", valueSourceType = 2, value = (string?)null, sourceKey = "apitoken", isEnabled = true });
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "X-Secret", valueSourceType = 3, value = (string?)null, sourceKey = "Secrets:ApiKey", isEnabled = true });
+        await client.PostAsJsonAsync(
+            $"/api/operations/{operationId}/headers",
+            new { key = "authorization", valueSourceType = 1, value = "Bearer override", sourceKey = (string?)null, isEnabled = true });
+
+        var response = await client.PostAsync($"/api/operations/{operationId}/execute", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Single(remote.Requests);
+        Assert.Contains(
+            remote.Requests[0].Headers,
+            x => string.Equals(x.Key, "authorization", StringComparison.OrdinalIgnoreCase)
+                && x.Value == "Bearer override");
+        Assert.Contains(
+            remote.Requests[0].Headers,
+            x => string.Equals(x.Key, "X-Secret", StringComparison.OrdinalIgnoreCase)
+                && x.Value == "secret-456");
+    }
+
+    [Fact]
+    public async Task Execute_WhenHeaderCannotResolve_ReturnsExecutionError_AndSkipsTargetCall()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "Authorization", valueSourceType = 2, value = (string?)null, sourceKey = "MissingToken", isEnabled = true });
+
+        var response = await client.PostAsync($"/api/operations/{operationId}/execute", null);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(result);
+        Assert.True(result!.HasExecutionError);
+        Assert.Equal("HeaderResolutionError", result.ErrorType);
+        Assert.Empty(remote.Requests);
     }
 
     [Fact]
@@ -474,6 +713,18 @@ public sealed class SimpleApiTesterApiIntegrationTests
 
     private sealed record QueryParameterDto(Guid Id, Guid OperationId, string Key, string? Value, bool IsEnabled);
 
+    private sealed record VariableDto(Guid Id, Guid DataSourceId, string Key, string? Value, bool IsEnabled);
+
+    private sealed record HeaderDto(
+        Guid Id,
+        Guid? DataSourceId,
+        Guid? OperationId,
+        string Key,
+        string? Value,
+        int ValueSourceType,
+        string? SourceKey,
+        bool IsEnabled);
+
     private sealed record ExecuteOperationDto(
         int? StatusCode,
         bool? IsSuccessStatusCode,
@@ -487,11 +738,15 @@ public sealed class SimpleApiTesterApiIntegrationTests
     private sealed class SimpleApiTesterApiFactory : WebApplicationFactory<Program>
     {
         private readonly string _databaseName = $"SimpleApiTesterTests-{Guid.NewGuid()}";
+        private readonly IReadOnlyDictionary<string, string?> _configurationValues;
         private readonly RemoteHttpStub _remoteHttpStub;
 
-        public SimpleApiTesterApiFactory(RemoteHttpStub? remoteHttpStub = null)
+        public SimpleApiTesterApiFactory(
+            RemoteHttpStub? remoteHttpStub = null,
+            IReadOnlyDictionary<string, string?>? configurationValues = null)
         {
             _remoteHttpStub = remoteHttpStub ?? new RemoteHttpStub();
+            _configurationValues = configurationValues ?? new Dictionary<string, string?>();
         }
 
         public HttpClient CreateApiClient()
@@ -503,6 +758,10 @@ public sealed class SimpleApiTesterApiIntegrationTests
         protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+            builder.ConfigureAppConfiguration((_, configurationBuilder) =>
+            {
+                configurationBuilder.AddInMemoryCollection(_configurationValues);
+            });
 
             builder.ConfigureServices(services =>
             {
@@ -569,7 +828,10 @@ public sealed class SimpleApiTesterApiIntegrationTests
                 request.Method,
                 request.RequestUri!.AbsoluteUri,
                 body,
-                request.Content?.Headers.ContentType?.ToString()));
+                request.Content?.Headers.ContentType?.ToString(),
+                request.Headers.SelectMany(
+                        header => header.Value.Select(value => new KeyValuePair<string, string>(header.Key, value)))
+                    .ToList()));
 
             return await Responder(Requests[^1]);
         }
@@ -585,12 +847,18 @@ public sealed class SimpleApiTesterApiIntegrationTests
 
     private sealed class CapturedRequest : IDisposable
     {
-        public CapturedRequest(HttpMethod method, string url, string? body, string? contentType)
+        public CapturedRequest(
+            HttpMethod method,
+            string url,
+            string? body,
+            string? contentType,
+            IReadOnlyList<KeyValuePair<string, string>> headers)
         {
             Method = method;
             Url = url;
             Body = body;
             ContentType = contentType;
+            Headers = headers;
         }
 
         public HttpMethod Method { get; }
@@ -600,6 +868,8 @@ public sealed class SimpleApiTesterApiIntegrationTests
         public string? Body { get; }
 
         public string? ContentType { get; }
+
+        public IReadOnlyList<KeyValuePair<string, string>> Headers { get; }
 
         public void Dispose()
         {

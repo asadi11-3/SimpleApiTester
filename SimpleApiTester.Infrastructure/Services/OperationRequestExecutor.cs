@@ -32,10 +32,27 @@ internal sealed class OperationRequestExecutor : IOperationRequestExecutor
                 CreateHttpMethod(request.MethodType),
                 request.Url);
 
+            foreach (var header in request.Headers)
+            {
+                if (!requestMessage.Headers.TryAddWithoutValidation(header.Key, header.Value)
+                    && requestMessage.Content is not null)
+                {
+                    requestMessage.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                }
+            }
+
             if (ShouldAttachBody(request.MethodType) && request.Body is not null)
             {
                 requestMessage.Content = new StringContent(request.Body, Encoding.UTF8);
                 requestMessage.Content.Headers.ContentType = CreateContentTypeHeader(request.ContentType);
+
+                foreach (var header in request.Headers)
+                {
+                    if (!requestMessage.Headers.Contains(header.Key))
+                    {
+                        requestMessage.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                    }
+                }
             }
 
             var httpClient = _httpClientFactory.CreateClient(ClientName);

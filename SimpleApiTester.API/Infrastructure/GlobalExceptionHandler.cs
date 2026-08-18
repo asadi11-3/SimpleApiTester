@@ -9,13 +9,6 @@ internal sealed class GlobalExceptionHandler : IExceptionHandler
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
-    private readonly IHostEnvironment _hostEnvironment;
-
-    public GlobalExceptionHandler(IHostEnvironment hostEnvironment)
-    {
-        _hostEnvironment = hostEnvironment;
-    }
-
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext,
         Exception exception,
@@ -73,7 +66,6 @@ internal sealed class GlobalExceptionHandler : IExceptionHandler
             ValidationException => exception.Message,
             KeyNotFoundException => exception.Message,
             InvalidOperationException => exception.Message,
-            _ when _hostEnvironment.IsDevelopment() => exception.Message,
             _ => "An unexpected error occurred while processing the request."
         };
     }

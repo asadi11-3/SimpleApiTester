@@ -21,6 +21,10 @@ namespace SimpleApiTester.Infrastructure.Persistence
 
         public DbSet<QueryParameter> QueryParameters => Set<QueryParameter>();
 
+        public DbSet<Variable> Variables => Set<Variable>();
+
+        public DbSet<Header> Headers => Set<Header>();
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.ApplyConfigurationsFromAssembly(

@@ -195,6 +195,29 @@ public sealed class OperationRequestExecutorTests
         Assert.Equal("payload", await context.Request.Content!.ReadAsStringAsync());
     }
 
+    [Fact]
+    public async Task ExecuteAsync_AppliesResolvedRequestHeaders()
+    {
+        var context = CreateContext();
+        var executor = CreateExecutor(context);
+
+        await executor.ExecuteAsync(
+            new OperationHttpRequest(
+                "https://example.com/posts",
+                Domain.Enum.HttpMethodType.Get,
+                null,
+                null,
+                [
+                    new ResolvedRequestHeader("Authorization", "Bearer token"),
+                    new ResolvedRequestHeader("X-Trace", "trace-1")
+                ]),
+            CancellationToken.None);
+
+        Assert.NotNull(context.Request);
+        Assert.Equal("Bearer token", context.Request!.Headers.GetValues("Authorization").Single());
+        Assert.Equal("trace-1", context.Request.Headers.GetValues("X-Trace").Single());
+    }
+
     private static OperationRequestExecutor CreateExecutor(RequestCaptureContext context)
         => new(new FakeHttpClientFactory(context));
 

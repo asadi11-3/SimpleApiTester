@@ -14,4 +14,17 @@ public sealed record OperationHttpRequest(
     string Url,
     HttpMethodType MethodType,
     string? Body,
-    string? ContentType);
+    string? ContentType,
+    IReadOnlyCollection<ResolvedRequestHeader> Headers)
+{
+    public OperationHttpRequest(
+        string url,
+        HttpMethodType methodType,
+        string? body,
+        string? contentType)
+        : this(url, methodType, body, contentType, Array.Empty<ResolvedRequestHeader>())
+    {
+    }
+}
+
+public sealed record ResolvedRequestHeader(string Key, string Value);

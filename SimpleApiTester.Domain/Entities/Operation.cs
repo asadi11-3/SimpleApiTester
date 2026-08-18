@@ -24,6 +24,9 @@ namespace SimpleApiTester.Domain.Entities
         public ICollection<QueryParameter> QueryParameters { get; set; }
             = new List<QueryParameter>();
 
+        public ICollection<Header> Headers { get; set; }
+            = new List<Header>();
+
         public DataSource DataSource { get; set; } = null!;
     }
 }

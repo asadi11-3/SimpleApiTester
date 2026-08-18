@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using SimpleApiTester.Application.Abstractions.Headers;
 using SimpleApiTester.Application.Abstractions.Http;
 using SimpleApiTester.Application.Abstractions.Persistence;
 using SimpleApiTester.Infrastructure.Persistence;
@@ -17,6 +18,7 @@ namespace SimpleApiTester.Infrastructure
             services.AddHttpClient("OperationExecutor");
 
             services.AddScoped<IOperationRequestExecutor, OperationRequestExecutor>();
+            services.AddScoped<IExternalHeaderValueResolver, ExternalHeaderValueResolver>();
 
             services.AddDbContext<AppDbContext>(options =>
                 options.UseSqlServer(

@@ -32,6 +32,16 @@ namespace SimpleApiTester.Infrastructure.Persistence.Configurations
                 .WithOne(x => x.DataSource)
                 .HasForeignKey(x => x.DataSourceId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            builder.HasMany(x => x.Variables)
+                .WithOne(x => x.DataSource)
+                .HasForeignKey(x => x.DataSourceId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            builder.HasMany(x => x.Headers)
+                .WithOne(x => x.DataSource)
+                .HasForeignKey(x => x.DataSourceId)
+                .OnDelete(DeleteBehavior.NoAction);
         }
     }
 }

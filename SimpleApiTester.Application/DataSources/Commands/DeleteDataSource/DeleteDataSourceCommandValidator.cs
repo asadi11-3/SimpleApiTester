@@ -1,10 +1,12 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+using FluentValidation;
 
-namespace SimpleApiTester.Application.DataSources.Commands.DeleteDataSource
+namespace SimpleApiTester.Application.DataSources.Commands.DeleteDataSource;
+
+public sealed class DeleteDataSourceCommandValidator : AbstractValidator<DeleteDataSourceCommand>
 {
-    internal class DeleteDataSourceCommandValidator
+    public DeleteDataSourceCommandValidator()
     {
+        RuleFor(x => x.Id)
+            .NotEmpty();
     }
 }

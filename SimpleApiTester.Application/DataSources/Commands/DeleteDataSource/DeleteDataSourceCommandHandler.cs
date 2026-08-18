@@ -29,6 +29,15 @@ namespace SimpleApiTester.Application.DataSources.Commands.DeleteDataSource
             if (dataSource is null)
                 throw new KeyNotFoundException("DataSource not found.");
 
+            var dataSourceHeaders = await _dbContext.Headers
+                .Where(x => x.DataSourceId == request.Id)
+                .ToListAsync(cancellationToken);
+
+            if (dataSourceHeaders.Count != 0)
+            {
+                _dbContext.Headers.RemoveRange(dataSourceHeaders);
+            }
+
             _dbContext.DataSources.Remove(dataSource);
 
             await _dbContext.SaveChangesAsync(cancellationToken);

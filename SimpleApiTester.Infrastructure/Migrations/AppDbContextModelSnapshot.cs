@@ -49,6 +49,58 @@ namespace SimpleApiTester.Infrastructure.Migrations
                     b.ToTable("DataSources");
                 });
 
+            modelBuilder.Entity("SimpleApiTester.Domain.Entities.Header", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("DataSourceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("SQL_Latin1_General_CP1_CI_AS");
+
+                    b.Property<Guid?>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SourceKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("Value")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("ValueSourceType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DataSourceId", "Key")
+                        .IsUnique()
+                        .HasFilter("[DataSourceId] IS NOT NULL");
+
+                    b.HasIndex("OperationId", "Key")
+                        .IsUnique()
+                        .HasFilter("[OperationId] IS NOT NULL");
+
+                    b.ToTable("Headers", t =>
+                        {
+                            t.HasCheckConstraint("CK_Headers_ExactlyOneParent", "(([DataSourceId] IS NOT NULL AND [OperationId] IS NULL) OR ([DataSourceId] IS NULL AND [OperationId] IS NOT NULL))");
+
+                            t.HasCheckConstraint("CK_Headers_ValueSourceShape", "(([ValueSourceType] = 'General' AND [Value] IS NOT NULL AND [SourceKey] IS NULL) OR ([ValueSourceType] <> 'General' AND [Value] IS NULL AND [SourceKey] IS NOT NULL))");
+                        });
+                });
+
             modelBuilder.Entity("SimpleApiTester.Domain.Entities.Operation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -115,6 +167,53 @@ namespace SimpleApiTester.Infrastructure.Migrations
                     b.ToTable("QueryParameters");
                 });
 
+            modelBuilder.Entity("SimpleApiTester.Domain.Entities.Variable", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("DataSourceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("SQL_Latin1_General_CP1_CI_AS");
+
+                    b.Property<string>("Value")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DataSourceId", "Key")
+                        .IsUnique();
+
+                    b.ToTable("Variables");
+                });
+
+            modelBuilder.Entity("SimpleApiTester.Domain.Entities.Header", b =>
+                {
+                    b.HasOne("SimpleApiTester.Domain.Entities.DataSource", "DataSource")
+                        .WithMany("Headers")
+                        .HasForeignKey("DataSourceId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SimpleApiTester.Domain.Entities.Operation", "Operation")
+                        .WithMany("Headers")
+                        .HasForeignKey("OperationId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("DataSource");
+
+                    b.Navigation("Operation");
+                });
+
             modelBuilder.Entity("SimpleApiTester.Domain.Entities.Operation", b =>
                 {
                     b.HasOne("SimpleApiTester.Domain.Entities.DataSource", "DataSource")
@@ -137,13 +236,30 @@ namespace SimpleApiTester.Infrastructure.Migrations
                     b.Navigation("Operation");
                 });
 
+            modelBuilder.Entity("SimpleApiTester.Domain.Entities.Variable", b =>
+                {
+                    b.HasOne("SimpleApiTester.Domain.Entities.DataSource", "DataSource")
+                        .WithMany("Variables")
+                        .HasForeignKey("DataSourceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("DataSource");
+                });
+
             modelBuilder.Entity("SimpleApiTester.Domain.Entities.DataSource", b =>
                 {
+                    b.Navigation("Headers");
+
                     b.Navigation("Operations");
+
+                    b.Navigation("Variables");
                 });
 
             modelBuilder.Entity("SimpleApiTester.Domain.Entities.Operation", b =>
                 {
+                    b.Navigation("Headers");
+
                     b.Navigation("QueryParameters");
                 });
 #pragma warning restore 612, 618

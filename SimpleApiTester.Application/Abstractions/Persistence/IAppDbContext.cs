@@ -11,6 +11,10 @@ public interface IAppDbContext
 
     DbSet<QueryParameter> QueryParameters { get; }
 
+    DbSet<Variable> Variables { get; }
+
+    DbSet<Header> Headers { get; }
+
     Task<int> SaveChangesAsync(
         CancellationToken cancellationToken = default);
 }
