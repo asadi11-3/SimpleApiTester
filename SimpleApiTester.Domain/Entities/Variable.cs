@@ -12,5 +12,7 @@ public class Variable
 
     public bool IsEnabled { get; set; }
 
+    public bool IsSecret { get; set; }
+
     public DataSourceEnvironment DataSourceEnvironment { get; set; } = null!;
 }

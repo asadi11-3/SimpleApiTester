@@ -5,4 +5,5 @@ public sealed record VariableResponse(
     Guid DataSourceEnvironmentId,
     string Key,
     string? Value,
-    bool IsEnabled);
+    bool IsEnabled,
+    bool IsSecret);

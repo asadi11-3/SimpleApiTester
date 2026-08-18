@@ -33,8 +33,9 @@ internal sealed class GetVariablesByEnvironmentQueryHandler
                 x.Id,
                 x.DataSourceEnvironmentId,
                 x.Key,
-                x.Value,
-                x.IsEnabled))
+                x.IsSecret ? VariableValueMasking.MaskedValue : x.Value,
+                x.IsEnabled,
+                x.IsSecret))
             .ToListAsync(cancellationToken);
     }
 }

@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using SimpleApiTester.API.Contracts.Variables;
+using SimpleApiTester.Application.Variables;
 using SimpleApiTester.Application.Variables.Commands.CreateVariable;
 using SimpleApiTester.Application.Variables.Commands.DeleteVariable;
 using SimpleApiTester.Application.Variables.Commands.UpdateVariable;
@@ -26,14 +27,15 @@ public sealed class VariablesController : ControllerBase
         CancellationToken cancellationToken)
     {
         var id = await _sender.Send(
-            new CreateVariableCommand(environmentId, request.Key, request.Value, request.IsEnabled),
+            new CreateVariableCommand(environmentId, request.Key, request.Value, request.IsEnabled, request.IsSecret),
             cancellationToken);
 
         return CreatedAtAction(nameof(GetByEnvironment), new { environmentId }, new { id });
     }
 
     [HttpGet("environments/{environmentId:guid}/variables")]
-    public async Task<IActionResult> GetByEnvironment(
+    [ProducesResponseType(typeof(IReadOnlyCollection<VariableResponse>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyCollection<VariableResponse>>> GetByEnvironment(
         Guid environmentId,
         CancellationToken cancellationToken)
     {
@@ -48,7 +50,7 @@ public sealed class VariablesController : ControllerBase
         CancellationToken cancellationToken)
     {
         await _sender.Send(
-            new UpdateVariableCommand(id, request.Key, request.Value, request.IsEnabled),
+            new UpdateVariableCommand(id, request.Key, request.Value, request.IsEnabled, request.IsSecret),
             cancellationToken);
 
         return NoContent();

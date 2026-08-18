@@ -66,9 +66,14 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - `Key`
 - `Value`
 - `IsEnabled`
+- `IsSecret`
 - case-insensitive unique key per `DataSourceEnvironment`
 - disabled variables remain stored and listable
 - used only for header value resolution
+- secret variables are masked as `********` in read responses
+- secret masking is presentation-only and does not encrypt values at rest
+- `Value = null` on update preserves the existing stored value
+- sending `"********"` explicitly stores that literal value
 
 ### Headers
 - DataSource-level headers
@@ -112,6 +117,7 @@ When an operation is executed, the application:
 - loads enabled data-source and operation headers
 - merges headers case-insensitively with operation-level override
 - resolves variable-backed headers from the selected environment only
+- uses the real stored variable value even when the variable is marked secret
 - sends the request through `IHttpClientFactory`
 - returns remote HTTP responses, including non-2xx results, as normal execution results
 - returns transport failures and header resolution failures as execution errors
@@ -131,6 +137,14 @@ Existing V1 databases are migrated safely by creating one compatibility environm
 - `IsActive = true`
 
 Existing variables are moved into that compatibility environment, and existing variable-backed headers keep working because they still resolve by `SourceKey`.
+
+## Secret Variables
+Variables can be marked with `IsSecret = true` when their values should not be exposed through read APIs.
+
+- read responses return `Value = ********` for secret variables
+- execution still uses the real stored value
+- `IsSecret = false` returns the real value in read responses
+- this feature does not provide encryption at rest
 
 ## Database Setup
 Update `SimpleApiTester.API/appsettings.json` with a SQL Server connection string for `ConnectionStrings:DefaultConnection`.

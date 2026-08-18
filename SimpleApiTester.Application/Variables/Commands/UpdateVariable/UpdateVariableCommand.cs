@@ -6,4 +6,5 @@ public sealed record UpdateVariableCommand(
     Guid Id,
     string Key,
     string? Value,
-    bool IsEnabled) : IRequest;
+    bool IsEnabled,
+    bool IsSecret) : IRequest;

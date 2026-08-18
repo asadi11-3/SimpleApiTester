@@ -14,6 +14,7 @@ public sealed class CreateVariableCommandValidator : AbstractValidator<CreateVar
             .MaximumLength(100);
 
         RuleFor(x => x.Value)
+            .NotNull()
             .MaximumLength(2000);
     }
 }

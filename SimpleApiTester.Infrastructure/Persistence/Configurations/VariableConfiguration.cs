@@ -21,6 +21,9 @@ public sealed class VariableConfiguration : IEntityTypeConfiguration<Variable>
         builder.Property(x => x.IsEnabled)
             .IsRequired();
 
+        builder.Property(x => x.IsSecret)
+            .IsRequired();
+
         builder.HasIndex(x => new { x.DataSourceEnvironmentId, x.Key })
             .IsUnique();
 

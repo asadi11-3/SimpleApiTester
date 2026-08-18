@@ -979,6 +979,20 @@ public sealed class SimpleApiTesterApiIntegrationTests
         return await JsonDocument.ParseAsync(stream);
     }
 
+    private static async Task<StoredVariableState> GetStoredVariableStateAsync(SimpleApiTesterApiFactory factory, Guid variableId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var variable = await dbContext.Variables
+            .AsNoTracking()
+            .Where(x => x.Id == variableId)
+            .Select(x => new StoredVariableState(x.Key, x.Value, x.IsEnabled, x.IsSecret))
+            .SingleAsync();
+
+        return variable;
+    }
+
     private sealed record CreatedIdResponse(Guid Id);
 
     private sealed record DataSourceDto(Guid Id, string Key, bool IsActive);
@@ -996,7 +1010,9 @@ public sealed class SimpleApiTesterApiIntegrationTests
 
     private sealed record QueryParameterDto(Guid Id, Guid OperationId, string Key, string? Value, bool IsEnabled);
 
-    private sealed record VariableDto(Guid Id, Guid DataSourceEnvironmentId, string Key, string? Value, bool IsEnabled);
+    private sealed record VariableDto(Guid Id, Guid DataSourceEnvironmentId, string Key, string? Value, bool IsEnabled, bool IsSecret);
+
+    private sealed record StoredVariableState(string Key, string? Value, bool IsEnabled, bool IsSecret);
 
     private sealed record HeaderDto(
         Guid Id,

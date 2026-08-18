@@ -39,8 +39,13 @@ internal sealed class UpdateVariableCommandHandler : IRequestHandler<UpdateVaria
         }
 
         variable.Key = normalizedKey;
-        variable.Value = request.Value;
+        if (request.Value is not null)
+        {
+            variable.Value = request.Value;
+        }
+
         variable.IsEnabled = request.IsEnabled;
+        variable.IsSecret = request.IsSecret;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
     }

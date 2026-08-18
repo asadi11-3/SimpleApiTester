@@ -43,7 +43,8 @@ internal sealed class CreateVariableCommandHandler : IRequestHandler<CreateVaria
             DataSourceEnvironmentId = request.DataSourceEnvironmentId,
             Key = normalizedKey,
             Value = request.Value,
-            IsEnabled = request.IsEnabled
+            IsEnabled = request.IsEnabled,
+            IsSecret = request.IsSecret
         };
 
         _dbContext.Variables.Add(variable);

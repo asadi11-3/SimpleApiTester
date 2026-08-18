@@ -6,4 +6,5 @@ public sealed record CreateVariableCommand(
     Guid DataSourceEnvironmentId,
     string Key,
     string? Value,
-    bool IsEnabled) : IRequest<Guid>;
+    bool IsEnabled,
+    bool IsSecret) : IRequest<Guid>;
