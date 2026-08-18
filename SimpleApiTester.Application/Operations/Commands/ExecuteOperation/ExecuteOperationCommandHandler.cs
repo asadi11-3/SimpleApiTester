@@ -1,10 +1,11 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using SimpleApiTester.Application.DataSourceAuthentications;
 using SimpleApiTester.Application.Abstractions.Headers;
 using SimpleApiTester.Application.Abstractions.Http;
 using SimpleApiTester.Application.Abstractions.Persistence;
-using SimpleApiTester.Domain.Enum;
 using SimpleApiTester.Domain.Entities;
+using SimpleApiTester.Domain.Enum;
 
 namespace SimpleApiTester.Application.Operations.Commands.ExecuteOperation;
 
@@ -39,7 +40,8 @@ internal sealed class ExecuteOperationCommandHandler
                 x.Endpoint,
                 x.MethodType,
                 x.Body,
-                x.ContentType
+                x.ContentType,
+                x.AuthenticationMode
             })
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -99,15 +101,63 @@ internal sealed class ExecuteOperationCommandHandler
             .Select(x => new QueryParameterValue(x.Key, x.Value))
             .ToListAsync(cancellationToken);
 
-        var resolvedHeaders = await ResolveHeadersAsync(
+        var rawHeaderResolution = await ResolveHeadersAsync(
             operation.Id,
             operation.DataSourceId,
             request.EnvironmentId,
             cancellationToken);
 
-        if (resolvedHeaders.ErrorResponse is not null)
+        if (rawHeaderResolution.ErrorResponse is not null)
         {
-            return resolvedHeaders.ErrorResponse;
+            return rawHeaderResolution.ErrorResponse;
+        }
+
+        var finalHeaders = rawHeaderResolution.Headers.ToList();
+
+        if (operation.AuthenticationMode == OperationAuthenticationMode.Inherit)
+        {
+            var authentication = await _dbContext.DataSourceAuthentications
+                .AsNoTracking()
+                .Where(x => x.DataSourceId == operation.DataSourceId)
+                .Select(x => new DataSourceAuthenticationValue(
+                    x.AuthenticationType,
+                    x.ValueSourceType,
+                    x.SourceKey,
+                    x.ApiKeyHeaderName))
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (authentication is not null)
+            {
+                var effectiveHeaderName = DataSourceAuthenticationRules.GetEffectiveHeaderName(
+                    authentication.AuthenticationType,
+                    authentication.ApiKeyHeaderName);
+
+                if (rawHeaderResolution.MergedHeaderKeys.Any(
+                    x => string.Equals(x, effectiveHeaderName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return CreateAuthenticationConfigurationErrorResponse(
+                        authentication.AuthenticationType,
+                        authentication.ApiKeyHeaderName);
+                }
+
+                var resolvedAuthenticationValue = await ResolveAuthenticationValueAsync(
+                    authentication,
+                    rawHeaderResolution.EnabledVariables,
+                    cancellationToken);
+
+                if (string.IsNullOrWhiteSpace(resolvedAuthenticationValue))
+                {
+                    return CreateAuthenticationResolutionErrorResponse(
+                        authentication.AuthenticationType,
+                        authentication.SourceKey);
+                }
+
+                finalHeaders.Add(new ResolvedRequestHeader(
+                    effectiveHeaderName,
+                    authentication.AuthenticationType == AuthenticationType.Bearer
+                        ? $"Bearer {resolvedAuthenticationValue}"
+                        : resolvedAuthenticationValue));
+            }
         }
 
         if (!TryBuildRequestUrl(environment.BaseUrl, operation.Endpoint, queryParameters, out var requestUrl))
@@ -129,7 +179,7 @@ internal sealed class ExecuteOperationCommandHandler
                 operation.MethodType,
                 operation.Body,
                 operation.ContentType,
-                resolvedHeaders.Headers),
+                finalHeaders),
             cancellationToken);
     }
 
@@ -182,6 +232,8 @@ internal sealed class ExecuteOperationCommandHandler
             {
                 return new HeaderResolutionResult(
                     [],
+                    mergedHeaders.Keys.ToList(),
+                    enabledVariables,
                     new ExecuteOperationResponse(
                         StatusCode: null,
                         IsSuccessStatusCode: null,
@@ -196,7 +248,31 @@ internal sealed class ExecuteOperationCommandHandler
             resolvedHeaders.Add(new ResolvedRequestHeader(header.Key, resolvedValue));
         }
 
-        return new HeaderResolutionResult(resolvedHeaders, null);
+        return new HeaderResolutionResult(
+            resolvedHeaders,
+            mergedHeaders.Keys.ToList(),
+            enabledVariables,
+            null);
+    }
+
+    private async Task<string?> ResolveAuthenticationValueAsync(
+        DataSourceAuthenticationValue authentication,
+        IReadOnlyCollection<VariableValue> enabledVariables,
+        CancellationToken cancellationToken)
+    {
+        return authentication.ValueSourceType switch
+        {
+            HeaderValueSourceType.Variable => ResolveVariableValue(authentication.SourceKey, enabledVariables),
+            HeaderValueSourceType.UserSecret => await _externalHeaderValueResolver.ResolveAsync(
+                HeaderValueSourceType.UserSecret,
+                authentication.SourceKey,
+                cancellationToken),
+            HeaderValueSourceType.EnvironmentVariable => await _externalHeaderValueResolver.ResolveAsync(
+                HeaderValueSourceType.EnvironmentVariable,
+                authentication.SourceKey,
+                cancellationToken),
+            _ => null
+        };
     }
 
     private async Task<string?> ResolveHeaderValueAsync(
@@ -243,6 +319,32 @@ internal sealed class ExecuteOperationCommandHandler
             _ => $"Header '{header.Key}' could not be resolved."
         };
     }
+
+    private static ExecuteOperationResponse CreateAuthenticationResolutionErrorResponse(
+        AuthenticationType authenticationType,
+        string sourceKey)
+        => new(
+            StatusCode: null,
+            IsSuccessStatusCode: null,
+            ResponseBody: null,
+            ContentType: null,
+            DurationMilliseconds: 0,
+            HasExecutionError: true,
+            ErrorType: "AuthenticationResolutionError",
+            ErrorMessage: DataSourceAuthenticationRules.CreateResolutionErrorMessage(authenticationType, sourceKey));
+
+    private static ExecuteOperationResponse CreateAuthenticationConfigurationErrorResponse(
+        AuthenticationType authenticationType,
+        string? apiKeyHeaderName)
+        => new(
+            StatusCode: null,
+            IsSuccessStatusCode: null,
+            ResponseBody: null,
+            ContentType: null,
+            DurationMilliseconds: 0,
+            HasExecutionError: true,
+            ErrorType: "AuthenticationConfigurationError",
+            ErrorMessage: DataSourceAuthenticationRules.CreateConflictMessage(authenticationType, apiKeyHeaderName));
 
     private static bool TryBuildRequestUrl(
         string baseUrl,
@@ -315,5 +417,13 @@ internal sealed class ExecuteOperationCommandHandler
 
     private sealed record HeaderResolutionResult(
         IReadOnlyCollection<ResolvedRequestHeader> Headers,
+        IReadOnlyCollection<string> MergedHeaderKeys,
+        IReadOnlyCollection<VariableValue> EnabledVariables,
         ExecuteOperationResponse? ErrorResponse);
+
+    private sealed record DataSourceAuthenticationValue(
+        AuthenticationType AuthenticationType,
+        HeaderValueSourceType ValueSourceType,
+        string SourceKey,
+        string? ApiKeyHeaderName);
 }

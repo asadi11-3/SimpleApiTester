@@ -51,6 +51,9 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - `HttpMethodType`
 - optional `Body`
 - optional `ContentType`
+- `AuthenticationMode`
+  - `Inherit` applies structured data-source authentication when configured
+  - `None` suppresses only structured authentication for that operation
 
 ### QueryParameters
 - CRUD support
@@ -95,6 +98,27 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - `UserSecret` - resolve through `IConfiguration`
 - `EnvironmentVariable` - resolve through `Environment.GetEnvironmentVariable(...)`
 
+### Structured Authentication
+- optional per `DataSource`
+- supported types:
+  - `Bearer`
+  - `ApiKey` in header only
+- not supported:
+  - `Basic`
+  - query-string API keys
+  - OAuth or token refresh
+- auth values can resolve from:
+  - selected-environment `Variable`
+  - `UserSecret`
+  - `EnvironmentVariable`
+- `General` literal values are not supported for structured authentication
+- `DataSourceAuthentication` stores only metadata:
+  - `AuthenticationType`
+  - `ValueSourceType`
+  - `SourceKey`
+  - `ApiKeyHeaderName`
+- no structured auth row means no structured authentication is applied
+
 ### Reserved Headers
 The following custom headers cannot be configured through the header endpoints:
 - `Content-Type`
@@ -102,7 +126,12 @@ The following custom headers cannot be configured through the header endpoints:
 - `Host`
 - `Transfer-Encoding`
 
-`Authorization` is allowed as a normal custom header.
+`Authorization` is allowed as a normal custom header only when structured Bearer authentication is not configured for the same data source.
+
+When structured authentication exists, enabled raw headers cannot conflict with its effective header name:
+- structured `Bearer` conflicts with enabled raw `Authorization`
+- structured `ApiKey` conflicts with enabled raw header matching `ApiKeyHeaderName`
+- conflicts are case-insensitive and execution fails rather than silently overriding
 
 ## Execution Behavior
 When an operation is executed, the application:
@@ -118,6 +147,9 @@ When an operation is executed, the application:
 - merges headers case-insensitively with operation-level override
 - resolves variable-backed headers from the selected environment only
 - uses the real stored variable value even when the variable is marked secret
+- if `Operation.AuthenticationMode == Inherit`, optionally resolves structured data-source authentication
+- rejects structured-auth/raw-header conflicts before sending HTTP
+- adds either `Authorization: Bearer <value>` or `<ApiKeyHeaderName>: <value>` when structured authentication resolves successfully
 - sends the request through `IHttpClientFactory`
 - returns remote HTTP responses, including non-2xx results, as normal execution results
 - returns transport failures and header resolution failures as execution errors
@@ -125,6 +157,10 @@ When an operation is executed, the application:
 If header resolution fails, the outbound HTTP call is not sent and the execution result reports:
 - `HasExecutionError = true`
 - `ErrorType = "HeaderResolutionError"`
+
+If structured authentication cannot resolve or conflicts with raw headers, the outbound HTTP call is not sent and the execution result reports:
+- `HasExecutionError = true`
+- `ErrorType = "AuthenticationResolutionError"` or `"AuthenticationConfigurationError"`
 
 `ContentType` belongs to the `Operation`, not to headers.
 
@@ -145,6 +181,17 @@ Variables can be marked with `IsSecret = true` when their values should not be e
 - execution still uses the real stored value
 - `IsSecret = false` returns the real value in read responses
 - this feature does not provide encryption at rest
+
+## DataSource Authentication
+Structured authentication belongs to the `DataSource`, while environment-specific values remain in environment variables.
+
+Example:
+- `HR System` data source authentication: `Bearer` + `Variable` + `AccessToken`
+- `Development` environment variable: `AccessToken` secret value
+- `Login` operation: `AuthenticationMode = None`
+- `GetEmployees` operation: `AuthenticationMode = Inherit`
+
+This lets login-style operations skip structured auth while normal operations inherit it.
 
 ## Database Setup
 Update `SimpleApiTester.API/appsettings.json` with a SQL Server connection string for `ConnectionStrings:DefaultConnection`.
@@ -190,13 +237,15 @@ dotnet test "SimpleApiTester.slnx" -v minimal
 1. Create a `DataSource`.
 2. Create a `Development` environment under that data source.
 3. Create a `Production` environment under that data source.
-4. Create an `Operation` once under the data source.
-5. Add optional query parameters.
-6. Add environment-specific variables under each environment.
-7. Add optional data-source headers.
-8. Add optional operation headers.
-9. Execute the same operation with `Development` using its `environmentId`.
-10. Execute the same operation with `Production` using its `environmentId`.
+4. Optionally configure structured data-source authentication.
+5. Create an `Operation` once under the data source.
+6. Set `AuthenticationMode` to `Inherit` or `None` as needed.
+7. Add optional query parameters.
+8. Add environment-specific variables under each environment.
+9. Add optional data-source headers.
+10. Add optional operation headers.
+11. Execute the same operation with `Development` using its `environmentId`.
+12. Execute the same operation with `Production` using its `environmentId`.
 
 ## Main API Endpoints
 - `POST /api/data-sources`
@@ -204,6 +253,9 @@ dotnet test "SimpleApiTester.slnx" -v minimal
 - `GET /api/data-sources/{id}`
 - `PUT /api/data-sources/{id}`
 - `DELETE /api/data-sources/{id}`
+- `GET /api/data-sources/{dataSourceId}/authentication`
+- `PUT /api/data-sources/{dataSourceId}/authentication`
+- `DELETE /api/data-sources/{dataSourceId}/authentication`
 - `POST /api/data-sources/{dataSourceId}/environments`
 - `GET /api/data-sources/{dataSourceId}/environments`
 - `GET /api/environments/{id}`

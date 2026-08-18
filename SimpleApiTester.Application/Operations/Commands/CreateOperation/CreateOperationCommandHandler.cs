@@ -37,7 +37,8 @@ namespace SimpleApiTester.Application.Operations.Commands.CreateOperation
                 Endpoint = normalizedEndpoint,
                 MethodType = request.MethodType,
                 Body = request.Body,
-                ContentType = ContentTypeRules.Normalize(request.ContentType)
+                ContentType = ContentTypeRules.Normalize(request.ContentType),
+                AuthenticationMode = request.AuthenticationMode
             };
 
             _dbContext.Operations.Add(operation);

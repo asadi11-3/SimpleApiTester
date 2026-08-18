@@ -40,6 +40,7 @@ internal sealed class UpdateOperationCommandHandler
         operation.MethodType = request.MethodType;
         operation.Body = request.Body;
         operation.ContentType = ContentTypeRules.Normalize(request.ContentType);
+        operation.AuthenticationMode = request.AuthenticationMode;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
     }

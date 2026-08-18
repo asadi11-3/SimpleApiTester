@@ -8,6 +8,8 @@ public class DataSource
 
     public bool IsActive { get; set; }
 
+    public DataSourceAuthentication? Authentication { get; set; }
+
     public ICollection<Operation> Operations { get; set; } = new List<Operation>();
 
     public ICollection<Header> Headers { get; set; } = new List<Header>();

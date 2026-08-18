@@ -424,6 +424,215 @@ public sealed class ExecuteOperationCommandHandlerTests
     }
 
     [Fact]
+    public async Task Handle_WhenStructuredBearerAuthenticationIsConfigured_UsesResolvedVariableValue()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.Add(new Variable
+        {
+            Id = Guid.NewGuid(),
+            DataSourceEnvironmentId = environmentId,
+            Key = "AccessToken",
+            Value = "secret-token",
+            IsEnabled = true,
+            IsSecret = true
+        });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.Bearer,
+            ValueSourceType = HeaderValueSourceType.Variable,
+            SourceKey = "AccessToken"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+        Assert.Contains(executor.Request!.Headers, x => x.Key == "Authorization" && x.Value == "Bearer secret-token");
+    }
+
+    [Fact]
+    public async Task Handle_WhenOperationAuthenticationModeIsNone_SkipsStructuredAuthentication()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.None);
+
+        dbContext.Variables.Add(new Variable
+        {
+            Id = Guid.NewGuid(),
+            DataSourceEnvironmentId = environmentId,
+            Key = "AccessToken",
+            Value = "secret-token",
+            IsEnabled = true
+        });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.Bearer,
+            ValueSourceType = HeaderValueSourceType.Variable,
+            SourceKey = "AccessToken"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+        Assert.DoesNotContain(executor.Request!.Headers, x => x.Key == "Authorization");
+    }
+
+    [Fact]
+    public async Task Handle_WhenStructuredAuthenticationConflictsWithRawHeader_ReturnsAuthenticationConfigurationError()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Headers.Add(new Header
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            Key = "Authorization",
+            ValueSourceType = HeaderValueSourceType.General,
+            Value = "Bearer raw-token",
+            IsEnabled = true
+        });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.Bearer,
+            ValueSourceType = HeaderValueSourceType.EnvironmentVariable,
+            SourceKey = "ACCESS_TOKEN"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.True(response.HasExecutionError);
+        Assert.Equal("AuthenticationConfigurationError", response.ErrorType);
+        Assert.Equal("Structured Bearer authentication conflicts with raw header 'Authorization'.", response.ErrorMessage);
+        Assert.Null(executor.Request);
+    }
+
+    [Fact]
+    public async Task Handle_WhenStructuredAuthenticationCannotResolve_ReturnsAuthenticationResolutionError()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.ApiKey,
+            ValueSourceType = HeaderValueSourceType.Variable,
+            SourceKey = "MissingApiKey",
+            ApiKeyHeaderName = "X-Api-Key"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.True(response.HasExecutionError);
+        Assert.Equal("AuthenticationResolutionError", response.ErrorType);
+        Assert.Equal("Unable to resolve API key source 'MissingApiKey'.", response.ErrorMessage);
+        Assert.Null(executor.Request);
+    }
+
+    [Fact]
+    public async Task Handle_WhenStructuredAuthenticationUsesExternalSource_AddsApiKeyHeader()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.ApiKey,
+            ValueSourceType = HeaderValueSourceType.UserSecret,
+            SourceKey = "Secrets:ApiKey",
+            ApiKeyHeaderName = "X-Api-Key"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var resolver = new StubExternalHeaderValueResolver(
+            userSecrets: new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Secrets:ApiKey"] = "api-key-123"
+            });
+
+        var executor = new CapturingExecutor();
+        var handler = new ExecuteOperationCommandHandler(dbContext, resolver, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+        Assert.Contains(executor.Request!.Headers, x => x.Key == "X-Api-Key" && x.Value == "api-key-123");
+    }
+
+    [Fact]
     public async Task Handle_UsesNullContentType_WhenOperationDoesNotSpecifyOne()
     {
         await using var dbContext = CreateDbContext();
@@ -496,7 +705,8 @@ public sealed class ExecuteOperationCommandHandlerTests
         HttpMethodType methodType = HttpMethodType.Get,
         string endpoint = "/posts",
         string? body = null,
-        string? contentType = null)
+        string? contentType = null,
+        OperationAuthenticationMode authenticationMode = OperationAuthenticationMode.Inherit)
     {
         dbContext.Operations.Add(new Operation
         {
@@ -506,7 +716,8 @@ public sealed class ExecuteOperationCommandHandlerTests
             Endpoint = endpoint,
             MethodType = methodType,
             Body = body,
-            ContentType = contentType
+            ContentType = contentType,
+            AuthenticationMode = authenticationMode
         });
     }
 

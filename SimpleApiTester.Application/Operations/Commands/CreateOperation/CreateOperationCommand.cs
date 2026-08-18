@@ -6,12 +6,13 @@ using System.Text;
 
 namespace SimpleApiTester.Application.Operations.Commands.CreateOperation
 {
-    public sealed record CreateOperationCommand(
+public sealed record CreateOperationCommand(
     Guid DataSourceId,
     string ApiName,
     string Endpoint,
     HttpMethodType MethodType,
     string? Body,
-    string? ContentType
+    string? ContentType,
+    OperationAuthenticationMode AuthenticationMode
 ) : IRequest<Guid>;
 }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SimpleApiTester.Application.Abstractions.Persistence;
+using SimpleApiTester.Application.DataSourceAuthentications;
 using SimpleApiTester.Domain.Entities;
 
 namespace SimpleApiTester.Application.Headers.Commands;
@@ -24,6 +25,13 @@ internal static class HeaderFactory
             throw new InvalidOperationException($"Header with key '{normalizedKey}' already exists in this scope.");
         }
 
+        await DataSourceAuthenticationConflictGuard.EnsureHeaderDoesNotConflictAsync(
+            dbContext,
+            request.DataSourceId,
+            normalizedKey,
+            request.IsEnabled,
+            cancellationToken);
+
         return CreateHeader(
             dataSourceId: request.DataSourceId,
             operationId: null,
@@ -37,6 +45,7 @@ internal static class HeaderFactory
     public static async Task<Header> CreateOperationHeaderAsync(
         IAppDbContext dbContext,
         CreateOperationHeader.CreateOperationHeaderCommand request,
+        Guid dataSourceId,
         CancellationToken cancellationToken)
     {
         var normalizedKey = HeaderRules.NormalizeKey(request.Key);
@@ -51,6 +60,13 @@ internal static class HeaderFactory
         {
             throw new InvalidOperationException($"Header with key '{normalizedKey}' already exists in this scope.");
         }
+
+        await DataSourceAuthenticationConflictGuard.EnsureHeaderDoesNotConflictAsync(
+            dbContext,
+            dataSourceId,
+            normalizedKey,
+            request.IsEnabled,
+            cancellationToken);
 
         return CreateHeader(
             dataSourceId: null,

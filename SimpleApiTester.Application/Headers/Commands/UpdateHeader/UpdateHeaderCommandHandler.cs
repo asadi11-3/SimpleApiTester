@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using SimpleApiTester.Application.Abstractions.Persistence;
+using SimpleApiTester.Application.DataSourceAuthentications;
 
 namespace SimpleApiTester.Application.Headers.Commands.UpdateHeader;
 
@@ -40,6 +41,22 @@ internal sealed class UpdateHeaderCommandHandler : IRequestHandler<UpdateHeaderC
         if (duplicateExists)
         {
             throw new InvalidOperationException($"Header with key '{normalizedKey}' already exists in this scope.");
+        }
+
+        var owningDataSourceId = dataSourceId ?? await _dbContext.Operations
+            .AsNoTracking()
+            .Where(x => x.Id == operationId)
+            .Select(x => (Guid?)x.DataSourceId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (owningDataSourceId is not null)
+        {
+            await DataSourceAuthenticationConflictGuard.EnsureHeaderDoesNotConflictAsync(
+                _dbContext,
+                owningDataSourceId.Value,
+                normalizedKey,
+                request.IsEnabled,
+                cancellationToken);
         }
 
         header.Key = normalizedKey;

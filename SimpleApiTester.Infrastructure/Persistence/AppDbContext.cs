@@ -17,6 +17,8 @@ namespace SimpleApiTester.Infrastructure.Persistence
 
         public DbSet<DataSource> DataSources => Set<DataSource>();
 
+        public DbSet<DataSourceAuthentication> DataSourceAuthentications => Set<DataSourceAuthentication>();
+
         public DbSet<DataSourceEnvironment> DataSourceEnvironments => Set<DataSourceEnvironment>();
 
         public DbSet<Operation> Operations => Set<Operation>();

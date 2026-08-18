@@ -21,6 +21,9 @@ namespace SimpleApiTester.Domain.Entities
 
         public string? ContentType { get; set; }
 
+        public OperationAuthenticationMode AuthenticationMode { get; set; }
+            = OperationAuthenticationMode.Inherit;
+
         public ICollection<QueryParameter> QueryParameters { get; set; }
             = new List<QueryParameter>();
 

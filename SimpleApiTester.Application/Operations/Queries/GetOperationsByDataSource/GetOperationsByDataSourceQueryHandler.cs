@@ -42,7 +42,8 @@ namespace SimpleApiTester.Application.Operations.Queries.GetOperationsByDataSour
                     x.Endpoint,
                     x.MethodType,
                     x.Body,
-                    x.ContentType))
+                    x.ContentType,
+                    x.AuthenticationMode))
                 .ToListAsync(cancellationToken);
         }
     }

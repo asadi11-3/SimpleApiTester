@@ -7,4 +7,5 @@ public sealed record CreateOperationRequest(
     string Endpoint,
     HttpMethodType MethodType,
     string? Body,
-    string? ContentType);
+    string? ContentType,
+    OperationAuthenticationMode AuthenticationMode = OperationAuthenticationMode.Inherit);

@@ -33,6 +33,9 @@ namespace SimpleApiTester.Application.DataSources.Commands.DeleteDataSource
                 .Where(x => x.DataSourceId == request.Id)
                 .ToListAsync(cancellationToken);
 
+            var authentication = await _dbContext.DataSourceAuthentications
+                .FirstOrDefaultAsync(x => x.DataSourceId == request.Id, cancellationToken);
+
             var environments = await _dbContext.DataSourceEnvironments
                 .Where(x => x.DataSourceId == request.Id)
                 .ToListAsync(cancellationToken);
@@ -48,6 +51,11 @@ namespace SimpleApiTester.Application.DataSources.Commands.DeleteDataSource
             if (dataSourceHeaders.Count != 0)
             {
                 _dbContext.Headers.RemoveRange(dataSourceHeaders);
+            }
+
+            if (authentication is not null)
+            {
+                _dbContext.DataSourceAuthentications.Remove(authentication);
             }
 
             if (environments.Count != 0)

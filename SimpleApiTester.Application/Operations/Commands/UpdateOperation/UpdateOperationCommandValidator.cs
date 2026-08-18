@@ -26,6 +26,9 @@ public sealed class UpdateOperationCommandValidator
         RuleFor(x => x.MethodType)
             .IsInEnum();
 
+        RuleFor(x => x.AuthenticationMode)
+            .IsInEnum();
+
         RuleFor(x => x.ContentType)
             .Must(ContentTypeRules.IsValid)
             .WithMessage("ContentType must be a valid media type.");

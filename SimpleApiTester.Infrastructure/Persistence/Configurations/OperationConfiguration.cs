@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using SimpleApiTester.Domain.Entities;
+using SimpleApiTester.Domain.Enum;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -32,6 +33,11 @@ namespace SimpleApiTester.Infrastructure.Persistence.Configurations
 
             builder.Property(x => x.ContentType)
                 .HasMaxLength(200);
+
+            builder.Property(x => x.AuthenticationMode)
+                .HasConversion<string>()
+                .HasMaxLength(20)
+                .IsRequired();
 
             builder.HasMany(x => x.QueryParameters)
                 .WithOne(x => x.Operation)

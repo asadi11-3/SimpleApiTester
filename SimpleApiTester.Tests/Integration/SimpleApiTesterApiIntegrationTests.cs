@@ -96,6 +96,155 @@ public sealed class SimpleApiTesterApiIntegrationTests
         Assert.Equal(dataSourceId, operation.DataSourceId);
         Assert.Equal("Get posts", operation.ApiName);
         Assert.Equal("/posts", operation.Endpoint);
+        Assert.Equal(1, operation.AuthenticationMode);
+    }
+
+    [Fact]
+    public async Task DataSourceAuthentication_GetMissing_ReturnsNotFound()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var response = await client.GetAsync($"/api/data-sources/{dataSourceId}/authentication");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DataSourceAuthentication_Put_Get_Replace_And_Delete_Work()
+    {
+        using var factory = new SimpleApiTesterApiFactory(
+            configurationValues: new Dictionary<string, string?>
+            {
+                ["Secrets:ApiKey"] = "from-config"
+            });
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var createResponse = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 1,
+                valueSourceType = 2,
+                sourceKey = "AccessToken",
+                apiKeyHeaderName = (string?)null
+            });
+
+        Assert.Equal(HttpStatusCode.NoContent, createResponse.StatusCode);
+
+        var getResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/authentication");
+        var createdAuth = await getResponse.Content.ReadFromJsonAsync<DataSourceAuthenticationDto>();
+
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        Assert.NotNull(createdAuth);
+        Assert.Equal(dataSourceId, createdAuth!.DataSourceId);
+        Assert.Equal(1, createdAuth.AuthenticationType);
+        Assert.Equal(2, createdAuth.ValueSourceType);
+        Assert.Equal("AccessToken", createdAuth.SourceKey);
+        Assert.Null(createdAuth.ApiKeyHeaderName);
+
+        var replaceResponse = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 2,
+                valueSourceType = 3,
+                sourceKey = "Secrets:ApiKey",
+                apiKeyHeaderName = "X-Api-Key"
+            });
+
+        Assert.Equal(HttpStatusCode.NoContent, replaceResponse.StatusCode);
+
+        var replacedResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/authentication");
+        var replacedAuth = await replacedResponse.Content.ReadFromJsonAsync<DataSourceAuthenticationDto>();
+
+        Assert.NotNull(replacedAuth);
+        Assert.Equal(2, replacedAuth!.AuthenticationType);
+        Assert.Equal(3, replacedAuth.ValueSourceType);
+        Assert.Equal("Secrets:ApiKey", replacedAuth.SourceKey);
+        Assert.Equal("X-Api-Key", replacedAuth.ApiKeyHeaderName);
+
+        var deleteResponse = await client.DeleteAsync($"/api/data-sources/{dataSourceId}/authentication");
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+
+        var missingResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/authentication");
+        Assert.Equal(HttpStatusCode.NotFound, missingResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task DataSourceAuthentication_Put_BearerWithConflictingRawAuthorizationHeader_ReturnsConflict()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "Authorization", valueSourceType = 1, value = "Bearer raw", sourceKey = (string?)null, isEnabled = true });
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 1,
+                valueSourceType = 2,
+                sourceKey = "AccessToken",
+                apiKeyHeaderName = (string?)null
+            });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DataSourceAuthentication_Put_ApiKeyWithAuthorizationHeaderName_ReturnsBadRequest()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 2,
+                valueSourceType = 2,
+                sourceKey = "ApiKey",
+                apiKeyHeaderName = "Authorization"
+            });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Header_Create_EnabledAuthorizationConflictingWithStructuredBearer_ReturnsConflict()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 1,
+                valueSourceType = 2,
+                sourceKey = "AccessToken",
+                apiKeyHeaderName = (string?)null
+            });
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/operations/{operationId}/headers",
+            new { key = "authorization", valueSourceType = 1, value = "Bearer raw", sourceKey = (string?)null, isEnabled = true });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
     [Fact]
@@ -842,6 +991,225 @@ public sealed class SimpleApiTesterApiIntegrationTests
     }
 
     [Fact]
+    public async Task Execute_StructuredBearer_FromSecretVariable_UsesRealValue_AndMasksVariableReads()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 1,
+                valueSourceType = 2,
+                sourceKey = "AccessToken",
+                apiKeyHeaderName = (string?)null
+            });
+
+        var createVariableResponse = await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "AccessToken", value = "REAL_SECRET_TOKEN", isEnabled = true, isSecret = true });
+
+        var createdVariable = await createVariableResponse.Content.ReadFromJsonAsync<CreatedIdResponse>();
+        Assert.NotNull(createdVariable);
+
+        var variablesResponse = await client.GetAsync($"/api/environments/{environmentId}/variables");
+        var variables = await variablesResponse.Content.ReadFromJsonAsync<List<VariableDto>>();
+
+        Assert.NotNull(variables);
+        Assert.Equal("********", variables![0].Value);
+        Assert.True(variables[0].IsSecret);
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.False(result!.HasExecutionError);
+        Assert.Single(remote.Requests);
+        Assert.Contains(remote.Requests[0].Headers, x => x.Key == "Authorization" && x.Value == "Bearer REAL_SECRET_TOKEN");
+    }
+
+    [Fact]
+    public async Task Execute_StructuredApiKey_FromConfiguration_AddsHeader()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote, new Dictionary<string, string?>
+        {
+            ["Secrets:ApiKey"] = "config-key"
+        });
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 2,
+                valueSourceType = 3,
+                sourceKey = "Secrets:ApiKey",
+                apiKeyHeaderName = "X-Api-Key"
+            });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.False(result!.HasExecutionError);
+        Assert.Single(remote.Requests);
+        Assert.Contains(remote.Requests[0].Headers, x => x.Key == "X-Api-Key" && x.Value == "config-key");
+    }
+
+    [Fact]
+    public async Task Execute_StructuredAuthentication_BlankResolvedValue_ReturnsAuthenticationResolutionError()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote, new Dictionary<string, string?>
+        {
+            ["Secrets:BlankToken"] = "   "
+        });
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 1,
+                valueSourceType = 3,
+                sourceKey = "Secrets:BlankToken",
+                apiKeyHeaderName = (string?)null
+            });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.True(result!.HasExecutionError);
+        Assert.Equal("AuthenticationResolutionError", result.ErrorType);
+        Assert.Equal("Unable to resolve Bearer authentication source 'Secrets:BlankToken'.", result.ErrorMessage);
+        Assert.Empty(remote.Requests);
+    }
+
+    [Fact]
+    public async Task Execute_OperationAuthenticationModeNone_SuppressesStructuredAuthentication()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId, authenticationMode: 2);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 1,
+                valueSourceType = 2,
+                sourceKey = "AccessToken",
+                apiKeyHeaderName = (string?)null
+            });
+
+        await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "AccessToken", value = "SHOULD_NOT_SEND", isEnabled = true, isSecret = true });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.False(result!.HasExecutionError);
+        Assert.Single(remote.Requests);
+        Assert.DoesNotContain(remote.Requests[0].Headers, x => x.Key == "Authorization");
+    }
+
+    [Fact]
+    public async Task Execute_DefensiveStructuredAuthConflict_ReturnsAuthenticationConfigurationError()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await SeedStructuredAuthenticationAsync(
+            factory,
+            new SeededAuthentication(dataSourceId, 1, 2, "AccessToken", null));
+
+        await SeedRawDataSourceHeaderAsync(
+            factory,
+            dataSourceId,
+            new SeededHeader("Authorization", 1, "Bearer raw", null, true));
+
+        await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "AccessToken", value = "REAL_SECRET_TOKEN", isEnabled = true, isSecret = true });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.True(result!.HasExecutionError);
+        Assert.Equal("AuthenticationConfigurationError", result.ErrorType);
+        Assert.Equal("Structured Bearer authentication conflicts with raw header 'Authorization'.", result.ErrorMessage);
+        Assert.Empty(remote.Requests);
+    }
+
+    [Fact]
+    public async Task Execute_StructuredBearer_Remote401_RemainsNormalRemoteResponse()
+    {
+        using var remote = new RemoteHttpStub
+        {
+            Responder = _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("Unauthorized", Encoding.UTF8, "text/plain")
+            })
+        };
+
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 1,
+                valueSourceType = 2,
+                sourceKey = "AccessToken",
+                apiKeyHeaderName = (string?)null
+            });
+
+        await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "AccessToken", value = "REAL_SECRET_TOKEN", isEnabled = true, isSecret = true });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.False(result!.HasExecutionError);
+        Assert.Equal(401, result.StatusCode);
+    }
+
+    [Fact]
     public async Task Execute_HttpRequestFailure_ReturnsExecutionErrorResult()
     {
         using var remote = new RemoteHttpStub
@@ -951,7 +1319,8 @@ public sealed class SimpleApiTesterApiIntegrationTests
         string endpoint = "/posts",
         int methodType = 1,
         string? body = null,
-        string? contentType = null)
+        string? contentType = null,
+        int authenticationMode = 1)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/data-sources/{dataSourceId}/operations",
@@ -961,7 +1330,8 @@ public sealed class SimpleApiTesterApiIntegrationTests
                 endpoint,
                 methodType,
                 body,
-                contentType
+                contentType,
+                authenticationMode
             });
 
         response.EnsureSuccessStatusCode();
@@ -993,6 +1363,43 @@ public sealed class SimpleApiTesterApiIntegrationTests
         return variable;
     }
 
+    private static async Task SeedStructuredAuthenticationAsync(SimpleApiTesterApiFactory factory, SeededAuthentication authentication)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        dbContext.DataSourceAuthentications.Add(new SimpleApiTester.Domain.Entities.DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = authentication.DataSourceId,
+            AuthenticationType = (SimpleApiTester.Domain.Enum.AuthenticationType)authentication.AuthenticationType,
+            ValueSourceType = (SimpleApiTester.Domain.Enum.HeaderValueSourceType)authentication.ValueSourceType,
+            SourceKey = authentication.SourceKey,
+            ApiKeyHeaderName = authentication.ApiKeyHeaderName
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedRawDataSourceHeaderAsync(SimpleApiTesterApiFactory factory, Guid dataSourceId, SeededHeader header)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        dbContext.Headers.Add(new SimpleApiTester.Domain.Entities.Header
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            Key = header.Key,
+            ValueSourceType = (SimpleApiTester.Domain.Enum.HeaderValueSourceType)header.ValueSourceType,
+            Value = header.Value,
+            SourceKey = header.SourceKey,
+            IsEnabled = header.IsEnabled
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
     private sealed record CreatedIdResponse(Guid Id);
 
     private sealed record DataSourceDto(Guid Id, string Key, bool IsActive);
@@ -1006,13 +1413,36 @@ public sealed class SimpleApiTesterApiIntegrationTests
         string Endpoint,
         int MethodType,
         string? Body,
-        string? ContentType);
+        string? ContentType,
+        int AuthenticationMode);
+
+    private sealed record DataSourceAuthenticationDto(
+        Guid Id,
+        Guid DataSourceId,
+        int AuthenticationType,
+        int ValueSourceType,
+        string SourceKey,
+        string? ApiKeyHeaderName);
 
     private sealed record QueryParameterDto(Guid Id, Guid OperationId, string Key, string? Value, bool IsEnabled);
 
     private sealed record VariableDto(Guid Id, Guid DataSourceEnvironmentId, string Key, string? Value, bool IsEnabled, bool IsSecret);
 
     private sealed record StoredVariableState(string Key, string? Value, bool IsEnabled, bool IsSecret);
+
+    private sealed record SeededAuthentication(
+        Guid DataSourceId,
+        int AuthenticationType,
+        int ValueSourceType,
+        string SourceKey,
+        string? ApiKeyHeaderName);
+
+    private sealed record SeededHeader(
+        string Key,
+        int ValueSourceType,
+        string? Value,
+        string? SourceKey,
+        bool IsEnabled);
 
     private sealed record HeaderDto(
         Guid Id,

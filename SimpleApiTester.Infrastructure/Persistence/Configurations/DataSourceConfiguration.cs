@@ -24,6 +24,11 @@ namespace SimpleApiTester.Infrastructure.Persistence.Configurations
             builder.Property(x => x.IsActive)
                 .IsRequired();
 
+            builder.HasOne(x => x.Authentication)
+                .WithOne(x => x.DataSource)
+                .HasForeignKey<DataSourceAuthentication>(x => x.DataSourceId)
+                .OnDelete(DeleteBehavior.Cascade);
+
             builder.HasMany(x => x.Operations)
                 .WithOne(x => x.DataSource)
                 .HasForeignKey(x => x.DataSourceId)

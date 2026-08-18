@@ -10,4 +10,5 @@ public sealed record UpdateOperationCommand(
     string Endpoint,
     HttpMethodType MethodType,
     string? Body,
-    string? ContentType) : IRequest;
+    string? ContentType,
+    OperationAuthenticationMode AuthenticationMode) : IRequest;
