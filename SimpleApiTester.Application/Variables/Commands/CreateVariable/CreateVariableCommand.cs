@@ -3,7 +3,7 @@ using MediatR;
 namespace SimpleApiTester.Application.Variables.Commands.CreateVariable;
 
 public sealed record CreateVariableCommand(
-    Guid DataSourceId,
+    Guid DataSourceEnvironmentId,
     string Key,
     string? Value,
     bool IsEnabled) : IRequest<Guid>;

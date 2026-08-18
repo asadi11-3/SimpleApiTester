@@ -16,12 +16,12 @@ internal sealed class CreateVariableCommandHandler : IRequestHandler<CreateVaria
 
     public async Task<Guid> Handle(CreateVariableCommand request, CancellationToken cancellationToken)
     {
-        var dataSourceExists = await _dbContext.DataSources
-            .AnyAsync(x => x.Id == request.DataSourceId, cancellationToken);
+        var environmentExists = await _dbContext.DataSourceEnvironments
+            .AnyAsync(x => x.Id == request.DataSourceEnvironmentId, cancellationToken);
 
-        if (!dataSourceExists)
+        if (!environmentExists)
         {
-            throw new KeyNotFoundException("DataSource not found.");
+            throw new KeyNotFoundException("Environment not found.");
         }
 
         var normalizedKey = request.Key.Trim();
@@ -29,18 +29,18 @@ internal sealed class CreateVariableCommandHandler : IRequestHandler<CreateVaria
 
         var duplicateExists = await _dbContext.Variables
             .AnyAsync(
-                x => x.DataSourceId == request.DataSourceId && x.Key.ToUpper() == normalizedKeyUpper,
+                x => x.DataSourceEnvironmentId == request.DataSourceEnvironmentId && x.Key.ToUpper() == normalizedKeyUpper,
                 cancellationToken);
 
         if (duplicateExists)
         {
-            throw new InvalidOperationException($"Variable with key '{normalizedKey}' already exists for this data source.");
+            throw new InvalidOperationException($"Variable with key '{normalizedKey}' already exists for this environment.");
         }
 
         var variable = new Variable
         {
             Id = Guid.NewGuid(),
-            DataSourceId = request.DataSourceId,
+            DataSourceEnvironmentId = request.DataSourceEnvironmentId,
             Key = normalizedKey,
             Value = request.Value,
             IsEnabled = request.IsEnabled

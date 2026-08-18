@@ -7,6 +7,8 @@ public interface IAppDbContext
 {
     DbSet<DataSource> DataSources { get; }
 
+    DbSet<DataSourceEnvironment> DataSourceEnvironments { get; }
+
     DbSet<Operation> Operations { get; }
 
     DbSet<QueryParameter> QueryParameters { get; }

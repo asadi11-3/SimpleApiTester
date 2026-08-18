@@ -28,11 +28,6 @@ namespace SimpleApiTester.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("BaseUrl")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
@@ -47,6 +42,37 @@ namespace SimpleApiTester.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("DataSources");
+                });
+
+            modelBuilder.Entity("SimpleApiTester.Domain.Entities.DataSourceEnvironment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("BaseUrl")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<Guid>("DataSourceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("SQL_Latin1_General_CP1_CI_AS");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DataSourceId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("DataSourceEnvironments");
                 });
 
             modelBuilder.Entity("SimpleApiTester.Domain.Entities.Header", b =>
@@ -173,7 +199,7 @@ namespace SimpleApiTester.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<Guid>("DataSourceId")
+                    b.Property<Guid>("DataSourceEnvironmentId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<bool>("IsEnabled")
@@ -191,10 +217,21 @@ namespace SimpleApiTester.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DataSourceId", "Key")
+                    b.HasIndex("DataSourceEnvironmentId", "Key")
                         .IsUnique();
 
                     b.ToTable("Variables");
+                });
+
+            modelBuilder.Entity("SimpleApiTester.Domain.Entities.DataSourceEnvironment", b =>
+                {
+                    b.HasOne("SimpleApiTester.Domain.Entities.DataSource", "DataSource")
+                        .WithMany("Environments")
+                        .HasForeignKey("DataSourceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("DataSource");
                 });
 
             modelBuilder.Entity("SimpleApiTester.Domain.Entities.Header", b =>
@@ -238,21 +275,26 @@ namespace SimpleApiTester.Infrastructure.Migrations
 
             modelBuilder.Entity("SimpleApiTester.Domain.Entities.Variable", b =>
                 {
-                    b.HasOne("SimpleApiTester.Domain.Entities.DataSource", "DataSource")
+                    b.HasOne("SimpleApiTester.Domain.Entities.DataSourceEnvironment", "DataSourceEnvironment")
                         .WithMany("Variables")
-                        .HasForeignKey("DataSourceId")
+                        .HasForeignKey("DataSourceEnvironmentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("DataSource");
+                    b.Navigation("DataSourceEnvironment");
                 });
 
             modelBuilder.Entity("SimpleApiTester.Domain.Entities.DataSource", b =>
                 {
+                    b.Navigation("Environments");
+
                     b.Navigation("Headers");
 
                     b.Navigation("Operations");
+                });
 
+            modelBuilder.Entity("SimpleApiTester.Domain.Entities.DataSourceEnvironment", b =>
+                {
                     b.Navigation("Variables");
                 });
 

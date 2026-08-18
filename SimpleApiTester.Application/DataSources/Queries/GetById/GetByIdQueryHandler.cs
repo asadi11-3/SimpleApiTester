@@ -27,7 +27,6 @@ namespace SimpleApiTester.Application.DataSources.Queries.GetById
                 .Select(x => new DataSourceResponse(
                     x.Id,
                     x.Key,
-                    x.BaseUrl,
                     x.IsActive))
                 .FirstOrDefaultAsync(cancellationToken);
 

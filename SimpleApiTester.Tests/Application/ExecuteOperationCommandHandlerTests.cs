@@ -2,9 +2,9 @@ using Microsoft.EntityFrameworkCore;
 using SimpleApiTester.Application.Abstractions.Headers;
 using SimpleApiTester.Application.Abstractions.Http;
 using SimpleApiTester.Application.Operations.Commands.ExecuteOperation;
-using SimpleApiTester.Infrastructure.Persistence;
 using SimpleApiTester.Domain.Entities;
 using SimpleApiTester.Domain.Enum;
+using SimpleApiTester.Infrastructure.Persistence;
 
 namespace SimpleApiTester.Tests.Application;
 
@@ -16,26 +16,12 @@ public sealed class ExecuteOperationCommandHandlerTests
         await using var dbContext = CreateDbContext();
 
         var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
         var operationId = Guid.NewGuid();
 
-        dbContext.DataSources.Add(new DataSource
-        {
-            Id = dataSourceId,
-            Key = "jsonplaceholder",
-            BaseUrl = "https://example.com",
-            IsActive = true
-        });
-
-        dbContext.Operations.Add(new Operation
-        {
-            Id = operationId,
-            DataSourceId = dataSourceId,
-            ApiName = "Create post",
-            Endpoint = "/posts",
-            MethodType = HttpMethodType.Post,
-            Body = "{\"title\":\"hello\"}",
-            ContentType = "application/json"
-        });
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, HttpMethodType.Post, body: "{\"title\":\"hello\"}", contentType: "application/json");
 
         dbContext.QueryParameters.AddRange(
             new QueryParameter
@@ -58,9 +44,9 @@ public sealed class ExecuteOperationCommandHandlerTests
         await dbContext.SaveChangesAsync();
 
         var executor = new CapturingExecutor();
-        var handler = new ExecuteOperationCommandHandler(dbContext, new StubExternalHeaderValueResolver(), executor);
+        var handler = CreateHandler(dbContext, executor);
 
-        await handler.Handle(new ExecuteOperationCommand(operationId), CancellationToken.None);
+        await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
 
         Assert.NotNull(executor.Request);
         Assert.Equal("https://example.com/posts?userId=1", executor.Request!.Url);
@@ -70,29 +56,81 @@ public sealed class ExecuteOperationCommandHandlerTests
     }
 
     [Fact]
+    public async Task Handle_UsesSelectedEnvironmentBaseUrl_AndVariableValues()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var developmentEnvironmentId = Guid.NewGuid();
+        var productionEnvironmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, developmentEnvironmentId, dataSourceId, name: "Development", baseUrl: "https://dev.example.com");
+        SeedEnvironment(dbContext, productionEnvironmentId, dataSourceId, name: "Production", baseUrl: "https://prod.example.com");
+        SeedOperation(dbContext, operationId, dataSourceId);
+
+        dbContext.Variables.AddRange(
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = developmentEnvironmentId,
+                Key = "ApiToken",
+                Value = "dev-token",
+                IsEnabled = true
+            },
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = productionEnvironmentId,
+                Key = "ApiToken",
+                Value = "prod-token",
+                IsEnabled = true
+            });
+
+        dbContext.Headers.Add(new Header
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            Key = "Authorization",
+            ValueSourceType = HeaderValueSourceType.Variable,
+            SourceKey = "ApiToken",
+            IsEnabled = true
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var developmentExecutor = new CapturingExecutor();
+        var developmentHandler = CreateHandler(dbContext, developmentExecutor);
+
+        await developmentHandler.Handle(new ExecuteOperationCommand(operationId, developmentEnvironmentId), CancellationToken.None);
+
+        Assert.NotNull(developmentExecutor.Request);
+        Assert.Equal("https://dev.example.com/posts", developmentExecutor.Request!.Url);
+        Assert.Contains(developmentExecutor.Request.Headers, x => x.Key == "Authorization" && x.Value == "dev-token");
+
+        var productionExecutor = new CapturingExecutor();
+        var productionHandler = CreateHandler(dbContext, productionExecutor);
+
+        await productionHandler.Handle(new ExecuteOperationCommand(operationId, productionEnvironmentId), CancellationToken.None);
+
+        Assert.NotNull(productionExecutor.Request);
+        Assert.Equal("https://prod.example.com/posts", productionExecutor.Request!.Url);
+        Assert.Contains(productionExecutor.Request.Headers, x => x.Key == "Authorization" && x.Value == "prod-token");
+    }
+
+    [Fact]
     public async Task Handle_MergesEnabledHeaders_AndOperationOverridesDataSourceCaseInsensitively()
     {
         await using var dbContext = CreateDbContext();
 
         var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
         var operationId = Guid.NewGuid();
 
-        dbContext.DataSources.Add(new DataSource
-        {
-            Id = dataSourceId,
-            Key = "jsonplaceholder",
-            BaseUrl = "https://example.com",
-            IsActive = true
-        });
-
-        dbContext.Operations.Add(new Operation
-        {
-            Id = operationId,
-            DataSourceId = dataSourceId,
-            ApiName = "Get posts",
-            Endpoint = "/posts",
-            MethodType = HttpMethodType.Get
-        });
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId);
 
         dbContext.Headers.AddRange(
             new Header
@@ -126,9 +164,9 @@ public sealed class ExecuteOperationCommandHandlerTests
         await dbContext.SaveChangesAsync();
 
         var executor = new CapturingExecutor();
-        var handler = new ExecuteOperationCommandHandler(dbContext, new StubExternalHeaderValueResolver(), executor);
+        var handler = CreateHandler(dbContext, executor);
 
-        await handler.Handle(new ExecuteOperationCommand(operationId), CancellationToken.None);
+        await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
 
         Assert.NotNull(executor.Request);
         Assert.Collection(
@@ -151,24 +189,12 @@ public sealed class ExecuteOperationCommandHandlerTests
         await using var dbContext = CreateDbContext();
 
         var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
         var operationId = Guid.NewGuid();
 
-        dbContext.DataSources.Add(new DataSource
-        {
-            Id = dataSourceId,
-            Key = "jsonplaceholder",
-            BaseUrl = "https://example.com",
-            IsActive = true
-        });
-
-        dbContext.Operations.Add(new Operation
-        {
-            Id = operationId,
-            DataSourceId = dataSourceId,
-            ApiName = "Get posts",
-            Endpoint = "/posts",
-            MethodType = HttpMethodType.Get
-        });
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId);
 
         dbContext.Headers.AddRange(
             new Header
@@ -193,9 +219,9 @@ public sealed class ExecuteOperationCommandHandlerTests
         await dbContext.SaveChangesAsync();
 
         var executor = new CapturingExecutor();
-        var handler = new ExecuteOperationCommandHandler(dbContext, new StubExternalHeaderValueResolver(), executor);
+        var handler = CreateHandler(dbContext, executor);
 
-        await handler.Handle(new ExecuteOperationCommand(operationId), CancellationToken.None);
+        await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
 
         Assert.NotNull(executor.Request);
         var singleHeader = Assert.Single(executor.Request!.Headers);
@@ -203,38 +229,37 @@ public sealed class ExecuteOperationCommandHandlerTests
     }
 
     [Fact]
-    public async Task Handle_ResolvesVariableAndExternalHeaderSources()
+    public async Task Handle_ResolvesVariableAndExternalHeaderSources_FromSelectedEnvironmentOnly()
     {
         await using var dbContext = CreateDbContext();
 
         var dataSourceId = Guid.NewGuid();
+        var developmentEnvironmentId = Guid.NewGuid();
+        var stagingEnvironmentId = Guid.NewGuid();
         var operationId = Guid.NewGuid();
 
-        dbContext.DataSources.Add(new DataSource
-        {
-            Id = dataSourceId,
-            Key = "jsonplaceholder",
-            BaseUrl = "https://example.com",
-            IsActive = true
-        });
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, developmentEnvironmentId, dataSourceId, name: "Development", baseUrl: "https://example.com");
+        SeedEnvironment(dbContext, stagingEnvironmentId, dataSourceId, name: "Staging", baseUrl: "https://staging.example.com");
+        SeedOperation(dbContext, operationId, dataSourceId);
 
-        dbContext.Operations.Add(new Operation
-        {
-            Id = operationId,
-            DataSourceId = dataSourceId,
-            ApiName = "Get posts",
-            Endpoint = "/posts",
-            MethodType = HttpMethodType.Get
-        });
-
-        dbContext.Variables.Add(new Variable
-        {
-            Id = Guid.NewGuid(),
-            DataSourceId = dataSourceId,
-            Key = "ApiToken",
-            Value = "token-123",
-            IsEnabled = true
-        });
+        dbContext.Variables.AddRange(
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = developmentEnvironmentId,
+                Key = "ApiToken",
+                Value = "token-123",
+                IsEnabled = true
+            },
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = stagingEnvironmentId,
+                Key = "ApiToken",
+                Value = "wrong-token",
+                IsEnabled = true
+            });
 
         dbContext.Headers.AddRange(
             new Header
@@ -280,48 +305,48 @@ public sealed class ExecuteOperationCommandHandlerTests
         var executor = new CapturingExecutor();
         var handler = new ExecuteOperationCommandHandler(dbContext, resolver, executor);
 
-        await handler.Handle(new ExecuteOperationCommand(operationId), CancellationToken.None);
+        await handler.Handle(new ExecuteOperationCommand(operationId, developmentEnvironmentId), CancellationToken.None);
 
         Assert.NotNull(executor.Request);
         Assert.Equal(3, executor.Request!.Headers.Count);
         Assert.Contains(executor.Request.Headers, x => x.Key == "X-Variable" && x.Value == "token-123");
+        Assert.DoesNotContain(executor.Request.Headers, x => x.Key == "X-Variable" && x.Value == "wrong-token");
         Assert.Contains(executor.Request.Headers, x => x.Key == "X-Secret" && x.Value == "secret-456");
         Assert.Contains(executor.Request.Headers, x => x.Key == "X-Environment" && x.Value == "env-789");
     }
 
     [Fact]
-    public async Task Handle_WhenHeaderVariableCannotResolve_ReturnsExecutionErrorAndSkipsExecutor()
+    public async Task Handle_WhenHeaderVariableCannotResolveInSelectedEnvironment_ReturnsExecutionErrorAndSkipsExecutor()
     {
         await using var dbContext = CreateDbContext();
 
         var dataSourceId = Guid.NewGuid();
+        var selectedEnvironmentId = Guid.NewGuid();
+        var otherEnvironmentId = Guid.NewGuid();
         var operationId = Guid.NewGuid();
 
-        dbContext.DataSources.Add(new DataSource
-        {
-            Id = dataSourceId,
-            Key = "jsonplaceholder",
-            BaseUrl = "https://example.com",
-            IsActive = true
-        });
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, selectedEnvironmentId, dataSourceId, name: "Development", baseUrl: "https://example.com");
+        SeedEnvironment(dbContext, otherEnvironmentId, dataSourceId, name: "Production", baseUrl: "https://prod.example.com");
+        SeedOperation(dbContext, operationId, dataSourceId);
 
-        dbContext.Operations.Add(new Operation
-        {
-            Id = operationId,
-            DataSourceId = dataSourceId,
-            ApiName = "Get posts",
-            Endpoint = "/posts",
-            MethodType = HttpMethodType.Get
-        });
-
-        dbContext.Variables.Add(new Variable
-        {
-            Id = Guid.NewGuid(),
-            DataSourceId = dataSourceId,
-            Key = "ApiToken",
-            Value = "token-123",
-            IsEnabled = false
-        });
+        dbContext.Variables.AddRange(
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = selectedEnvironmentId,
+                Key = "ApiToken",
+                Value = "token-123",
+                IsEnabled = false
+            },
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = otherEnvironmentId,
+                Key = "ApiToken",
+                Value = "other-token",
+                IsEnabled = true
+            });
 
         dbContext.Headers.Add(new Header
         {
@@ -336,13 +361,65 @@ public sealed class ExecuteOperationCommandHandlerTests
         await dbContext.SaveChangesAsync();
 
         var executor = new CapturingExecutor();
-        var handler = new ExecuteOperationCommandHandler(dbContext, new StubExternalHeaderValueResolver(), executor);
+        var handler = CreateHandler(dbContext, executor);
 
-        var response = await handler.Handle(new ExecuteOperationCommand(operationId), CancellationToken.None);
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, selectedEnvironmentId), CancellationToken.None);
 
         Assert.True(response.HasExecutionError);
         Assert.Equal("HeaderResolutionError", response.ErrorType);
-        Assert.Contains("ApiToken", response.ErrorMessage);
+        Assert.Contains("selected environment", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(executor.Request);
+    }
+
+    [Fact]
+    public async Task Handle_WhenEnvironmentDoesNotBelongToOperationDataSource_ThrowsConflict()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var firstDataSourceId = Guid.NewGuid();
+        var secondDataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, firstDataSourceId, key: "first");
+        SeedDataSource(dbContext, secondDataSourceId, key: "second");
+        SeedEnvironment(dbContext, environmentId, secondDataSourceId, baseUrl: "https://other.example.com");
+        SeedOperation(dbContext, operationId, firstDataSourceId);
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None));
+
+        Assert.Equal("The selected environment does not belong to the operation's data source.", exception.Message);
+        Assert.Null(executor.Request);
+    }
+
+    [Fact]
+    public async Task Handle_WhenEnvironmentIsInactive_ThrowsConflict()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com", isActive: false);
+        SeedOperation(dbContext, operationId, dataSourceId);
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None));
+
+        Assert.Equal("Cannot execute an operation for an inactive environment.", exception.Message);
         Assert.Null(executor.Request);
     }
 
@@ -352,15 +429,11 @@ public sealed class ExecuteOperationCommandHandlerTests
         await using var dbContext = CreateDbContext();
 
         var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
         var operationId = Guid.NewGuid();
 
-        dbContext.DataSources.Add(new DataSource
-        {
-            Id = dataSourceId,
-            Key = "jsonplaceholder",
-            BaseUrl = "https://example.com",
-            IsActive = true
-        });
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
 
         dbContext.Operations.Add(new Operation
         {
@@ -376,13 +449,65 @@ public sealed class ExecuteOperationCommandHandlerTests
         await dbContext.SaveChangesAsync();
 
         var executor = new CapturingExecutor();
-        var handler = new ExecuteOperationCommandHandler(dbContext, new StubExternalHeaderValueResolver(), executor);
+        var handler = CreateHandler(dbContext, executor);
 
-        await handler.Handle(new ExecuteOperationCommand(operationId), CancellationToken.None);
+        await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
 
         Assert.NotNull(executor.Request);
         Assert.Equal("https://example.com/posts", executor.Request!.Url);
         Assert.Null(executor.Request.ContentType);
+    }
+
+    private static ExecuteOperationCommandHandler CreateHandler(AppDbContext dbContext, CapturingExecutor executor)
+        => new(dbContext, new StubExternalHeaderValueResolver(), executor);
+
+    private static void SeedDataSource(AppDbContext dbContext, Guid dataSourceId, string key = "jsonplaceholder", bool isActive = true)
+    {
+        dbContext.DataSources.Add(new DataSource
+        {
+            Id = dataSourceId,
+            Key = key,
+            IsActive = isActive
+        });
+    }
+
+    private static void SeedEnvironment(
+        AppDbContext dbContext,
+        Guid environmentId,
+        Guid dataSourceId,
+        string name = "Development",
+        string baseUrl = "https://example.com",
+        bool isActive = true)
+    {
+        dbContext.DataSourceEnvironments.Add(new DataSourceEnvironment
+        {
+            Id = environmentId,
+            DataSourceId = dataSourceId,
+            Name = name,
+            BaseUrl = baseUrl,
+            IsActive = isActive
+        });
+    }
+
+    private static void SeedOperation(
+        AppDbContext dbContext,
+        Guid operationId,
+        Guid dataSourceId,
+        HttpMethodType methodType = HttpMethodType.Get,
+        string endpoint = "/posts",
+        string? body = null,
+        string? contentType = null)
+    {
+        dbContext.Operations.Add(new Operation
+        {
+            Id = operationId,
+            DataSourceId = dataSourceId,
+            ApiName = "Get posts",
+            Endpoint = endpoint,
+            MethodType = methodType,
+            Body = body,
+            ContentType = contentType
+        });
     }
 
     private static AppDbContext CreateDbContext()
@@ -427,7 +552,7 @@ public sealed class ExecuteOperationCommandHandlerTests
             _environmentVariables = environmentVariables ?? new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         }
 
-        public Task<string?> ResolveAsync(Domain.Enum.HeaderValueSourceType valueSourceType, string sourceKey, CancellationToken cancellationToken)
+        public Task<string?> ResolveAsync(HeaderValueSourceType valueSourceType, string sourceKey, CancellationToken cancellationToken)
         {
             var value = valueSourceType switch
             {

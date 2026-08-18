@@ -1,11 +1,9 @@
 # SimpleApiTester
 
 ## Purpose
-SimpleApiTester is a small ASP.NET Core Web API for storing reusable API call definitions and executing them on demand.
+SimpleApiTester is a focused ASP.NET Core Web API for storing reusable API call definitions and executing them on demand.
 
-It is intentionally focused on a narrow V1 workflow: define a data source, define operations under that data source, attach query parameters, variables, and headers, then execute the configured HTTP request.
-
-Variables currently support header resolution only.
+It intentionally supports a narrow workflow: define a data source, create one or more environments under that data source, define operations once, configure headers and query parameters, store environment-specific variables, then execute the same operation against an explicitly selected environment.
 
 SimpleApiTester is intentionally not a full Postman replacement.
 
@@ -26,17 +24,28 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - Swagger / OpenAPI
 - xUnit
 
-## V1 Scope
+## V2 Environment Model
 
 ### DataSources
 - CRUD support
 - unique `Key`
+- `IsActive`
+- no `BaseUrl`
+- own `Operations`, `Headers`, and `Environments`
+
+### DataSourceEnvironments
+- CRUD support
+- belong to a `DataSource`
+- `Name`
 - `BaseUrl`
 - `IsActive`
+- case-insensitive unique `Name` per `DataSource`
+- no default-environment flag or automatic selection
 
 ### Operations
 - CRUD support
 - linked to a `DataSource`
+- created once and reused across environments
 - `ApiName`
 - relative `Endpoint`
 - `HttpMethodType`
@@ -53,12 +62,13 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - URI-encoded during execution
 
 ### Variables
-- belong to a `DataSource`
+- belong to a `DataSourceEnvironment`
 - `Key`
 - `Value`
 - `IsEnabled`
-- case-insensitive unique key per `DataSource`
-- used only for header value resolution in V1
+- case-insensitive unique key per `DataSourceEnvironment`
+- disabled variables remain stored and listable
+- used only for header value resolution
 
 ### Headers
 - DataSource-level headers
@@ -72,10 +82,11 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - case-insensitive uniqueness within the same scope
 - operation-level enabled header overrides matching data-source enabled header
 - disabled operation-level header does not suppress the enabled data-source header
+- environment headers do not exist
 
 ### Header Value Sources
 - `General` - literal `Value`
-- `Variable` - resolve from an enabled variable in the same `DataSource`
+- `Variable` - resolve from an enabled variable in the selected `DataSourceEnvironment`
 - `UserSecret` - resolve through `IConfiguration`
 - `EnvironmentVariable` - resolve through `Environment.GetEnvironmentVariable(...)`
 
@@ -86,18 +97,21 @@ The following custom headers cannot be configured through the header endpoints:
 - `Host`
 - `Transfer-Encoding`
 
-`Authorization` is allowed as a normal raw header.
+`Authorization` is allowed as a normal custom header.
 
 ## Execution Behavior
 When an operation is executed, the application:
 - loads the `Operation`
 - loads the related `DataSource`
+- loads the selected `DataSourceEnvironment`
+- verifies the selected environment belongs to the operation's data source
 - rejects execution if the `DataSource` is inactive
+- rejects execution if the selected `DataSourceEnvironment` is inactive
 - loads enabled query parameters
-- builds the final request URI
+- builds the final request URI from `selectedEnvironment.BaseUrl + operation.Endpoint + enabled query parameters`
 - loads enabled data-source and operation headers
-- merges headers case-insensitively
-- resolves header values before the outbound call
+- merges headers case-insensitively with operation-level override
+- resolves variable-backed headers from the selected environment only
 - sends the request through `IHttpClientFactory`
 - returns remote HTTP responses, including non-2xx results, as normal execution results
 - returns transport failures and header resolution failures as execution errors
@@ -107,6 +121,16 @@ If header resolution fails, the outbound HTTP call is not sent and the execution
 - `ErrorType = "HeaderResolutionError"`
 
 `ContentType` belongs to the `Operation`, not to headers.
+
+Environment selection is required for every execution. There is no hidden default selection.
+
+## V1 Migration Compatibility
+Existing V1 databases are migrated safely by creating one compatibility environment per existing data source:
+- `Name = "Default"`
+- `BaseUrl = previous DataSource.BaseUrl`
+- `IsActive = true`
+
+Existing variables are moved into that compatibility environment, and existing variable-backed headers keep working because they still resolve by `SourceKey`.
 
 ## Database Setup
 Update `SimpleApiTester.API/appsettings.json` with a SQL Server connection string for `ConnectionStrings:DefaultConnection`.
@@ -148,14 +172,17 @@ dotnet ef migrations add <MigrationName> --project "SimpleApiTester.Infrastructu
 dotnet test "SimpleApiTester.slnx" -v minimal
 ```
 
-## Typical Workflow
-1. Create a `DataSource` with a base URL.
-2. Create an `Operation` under that data source.
-3. Add optional query parameters.
-4. Add optional variables.
-5. Add optional data-source headers.
-6. Add optional operation headers.
-7. Execute the operation.
+## Example Workflow
+1. Create a `DataSource`.
+2. Create a `Development` environment under that data source.
+3. Create a `Production` environment under that data source.
+4. Create an `Operation` once under the data source.
+5. Add optional query parameters.
+6. Add environment-specific variables under each environment.
+7. Add optional data-source headers.
+8. Add optional operation headers.
+9. Execute the same operation with `Development` using its `environmentId`.
+10. Execute the same operation with `Production` using its `environmentId`.
 
 ## Main API Endpoints
 - `POST /api/data-sources`
@@ -163,18 +190,23 @@ dotnet test "SimpleApiTester.slnx" -v minimal
 - `GET /api/data-sources/{id}`
 - `PUT /api/data-sources/{id}`
 - `DELETE /api/data-sources/{id}`
+- `POST /api/data-sources/{dataSourceId}/environments`
+- `GET /api/data-sources/{dataSourceId}/environments`
+- `GET /api/environments/{id}`
+- `PUT /api/environments/{id}`
+- `DELETE /api/environments/{id}`
 - `POST /api/data-sources/{dataSourceId}/operations`
 - `GET /api/data-sources/{dataSourceId}/operations`
 - `GET /api/operations/{id}`
 - `PUT /api/operations/{id}`
 - `DELETE /api/operations/{id}`
-- `POST /api/operations/{id}/execute`
+- `POST /api/operations/{id}/execute?environmentId={environmentId}`
 - `POST /api/operations/{operationId}/query-parameters`
 - `GET /api/operations/{operationId}/query-parameters`
 - `PUT /api/query-parameters/{id}`
 - `DELETE /api/query-parameters/{id}`
-- `POST /api/data-sources/{dataSourceId}/variables`
-- `GET /api/data-sources/{dataSourceId}/variables`
+- `POST /api/environments/{environmentId}/variables`
+- `GET /api/environments/{environmentId}/variables`
 - `PUT /api/variables/{id}`
 - `DELETE /api/variables/{id}`
 - `POST /api/data-sources/{dataSourceId}/headers`
@@ -185,13 +217,16 @@ dotnet test "SimpleApiTester.slnx" -v minimal
 - `DELETE /api/headers/{id}`
 
 ## Known Non-Goals
-V1 intentionally does not include:
-- collections/workspaces
+This project intentionally does not include:
+- environment headers
+- data-source-level variables
+- default environment selection
+- variable substitution in endpoints, bodies, or query parameters
+- auth frameworks or OAuth flows
 - request history
+- collections/workspaces
 - UI
 - retry policies
 - file upload helpers
-- advanced auth flows
 - request scripting
-- broad variable substitution outside header resolution
-- Postman-style feature parity
+- broad Postman-style feature parity

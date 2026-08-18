@@ -29,13 +29,13 @@ internal sealed class UpdateVariableCommandHandler : IRequestHandler<UpdateVaria
         var duplicateExists = await _dbContext.Variables
             .AnyAsync(
                 x => x.Id != request.Id
-                    && x.DataSourceId == variable.DataSourceId
+                    && x.DataSourceEnvironmentId == variable.DataSourceEnvironmentId
                     && x.Key.ToUpper() == normalizedKeyUpper,
                 cancellationToken);
 
         if (duplicateExists)
         {
-            throw new InvalidOperationException($"Variable with key '{normalizedKey}' already exists for this data source.");
+            throw new InvalidOperationException($"Variable with key '{normalizedKey}' already exists for this environment.");
         }
 
         variable.Key = normalizedKey;

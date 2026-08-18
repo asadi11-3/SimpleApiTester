@@ -21,10 +21,6 @@ namespace SimpleApiTester.Infrastructure.Persistence.Configurations
             builder.HasIndex(x => x.Key)
                 .IsUnique();
 
-            builder.Property(x => x.BaseUrl)
-                .HasMaxLength(500)
-                .IsRequired();
-
             builder.Property(x => x.IsActive)
                 .IsRequired();
 
@@ -33,7 +29,7 @@ namespace SimpleApiTester.Infrastructure.Persistence.Configurations
                 .HasForeignKey(x => x.DataSourceId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            builder.HasMany(x => x.Variables)
+            builder.HasMany(x => x.Environments)
                 .WithOne(x => x.DataSource)
                 .HasForeignKey(x => x.DataSourceId)
                 .OnDelete(DeleteBehavior.Cascade);

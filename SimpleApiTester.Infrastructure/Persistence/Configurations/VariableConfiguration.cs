@@ -21,12 +21,12 @@ public sealed class VariableConfiguration : IEntityTypeConfiguration<Variable>
         builder.Property(x => x.IsEnabled)
             .IsRequired();
 
-        builder.HasIndex(x => new { x.DataSourceId, x.Key })
+        builder.HasIndex(x => new { x.DataSourceEnvironmentId, x.Key })
             .IsUnique();
 
-        builder.HasOne(x => x.DataSource)
+        builder.HasOne(x => x.DataSourceEnvironment)
             .WithMany(x => x.Variables)
-            .HasForeignKey(x => x.DataSourceId)
+            .HasForeignKey(x => x.DataSourceEnvironmentId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }

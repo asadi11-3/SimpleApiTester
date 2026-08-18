@@ -1,5 +1,6 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using SimpleApiTester.API.Contracts.Operations;
 using SimpleApiTester.Application.Operations.Commands.CreateOperation;
 using SimpleApiTester.Application.Operations.Commands.DeleteOperation;
@@ -100,10 +101,11 @@ public sealed class OperationsController : ControllerBase
     [HttpPost("operations/{id:guid}/execute")]
     public async Task<IActionResult> Execute(
         Guid id,
+        [FromQuery, BindRequired] Guid environmentId,
         CancellationToken cancellationToken)
     {
         var result = await _sender.Send(
-            new ExecuteOperationCommand(id),
+            new ExecuteOperationCommand(id, environmentId),
             cancellationToken);
 
         return Ok(result);

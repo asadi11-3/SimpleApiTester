@@ -53,7 +53,6 @@ internal sealed class ExecuteOperationCommandHandler
             .Where(x => x.Id == operation.DataSourceId)
             .Select(x => new
             {
-                x.BaseUrl,
                 x.IsActive
             })
             .FirstOrDefaultAsync(cancellationToken);
@@ -63,9 +62,35 @@ internal sealed class ExecuteOperationCommandHandler
             throw new KeyNotFoundException("DataSource not found.");
         }
 
+        var environment = await _dbContext.DataSourceEnvironments
+            .AsNoTracking()
+            .Where(x => x.Id == request.EnvironmentId)
+            .Select(x => new
+            {
+                x.DataSourceId,
+                x.BaseUrl,
+                x.IsActive
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (environment is null)
+        {
+            throw new KeyNotFoundException("Environment not found.");
+        }
+
+        if (environment.DataSourceId != operation.DataSourceId)
+        {
+            throw new InvalidOperationException("The selected environment does not belong to the operation's data source.");
+        }
+
         if (!dataSource.IsActive)
         {
             throw new InvalidOperationException("Cannot execute an operation for an inactive data source.");
+        }
+
+        if (!environment.IsActive)
+        {
+            throw new InvalidOperationException("Cannot execute an operation for an inactive environment.");
         }
 
         var queryParameters = await _dbContext.QueryParameters
@@ -77,6 +102,7 @@ internal sealed class ExecuteOperationCommandHandler
         var resolvedHeaders = await ResolveHeadersAsync(
             operation.Id,
             operation.DataSourceId,
+            request.EnvironmentId,
             cancellationToken);
 
         if (resolvedHeaders.ErrorResponse is not null)
@@ -84,7 +110,7 @@ internal sealed class ExecuteOperationCommandHandler
             return resolvedHeaders.ErrorResponse;
         }
 
-        if (!TryBuildRequestUrl(dataSource.BaseUrl, operation.Endpoint, queryParameters, out var requestUrl))
+        if (!TryBuildRequestUrl(environment.BaseUrl, operation.Endpoint, queryParameters, out var requestUrl))
         {
             return new ExecuteOperationResponse(
                 StatusCode: null,
@@ -110,11 +136,12 @@ internal sealed class ExecuteOperationCommandHandler
     private async Task<HeaderResolutionResult> ResolveHeadersAsync(
         Guid operationId,
         Guid dataSourceId,
+        Guid dataSourceEnvironmentId,
         CancellationToken cancellationToken)
     {
         var enabledVariables = await _dbContext.Variables
             .AsNoTracking()
-            .Where(x => x.DataSourceId == dataSourceId && x.IsEnabled)
+            .Where(x => x.DataSourceEnvironmentId == dataSourceEnvironmentId && x.IsEnabled)
             .Select(x => new VariableValue(x.Key, x.Value))
             .ToListAsync(cancellationToken);
 
@@ -208,7 +235,7 @@ internal sealed class ExecuteOperationCommandHandler
         return header.ValueSourceType switch
         {
             HeaderValueSourceType.Variable =>
-                $"Header '{header.Key}' references variable '{header.SourceKey}', but no enabled variable with that key was found for the data source.",
+                $"Header '{header.Key}' references variable '{header.SourceKey}', but no enabled variable with that key was found for the selected environment.",
             HeaderValueSourceType.UserSecret =>
                 $"Header '{header.Key}' could not resolve configuration value '{header.SourceKey}'.",
             HeaderValueSourceType.EnvironmentVariable =>

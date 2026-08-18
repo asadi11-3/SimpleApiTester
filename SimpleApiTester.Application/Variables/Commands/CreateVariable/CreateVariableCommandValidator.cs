@@ -6,7 +6,7 @@ public sealed class CreateVariableCommandValidator : AbstractValidator<CreateVar
 {
     public CreateVariableCommandValidator()
     {
-        RuleFor(x => x.DataSourceId)
+        RuleFor(x => x.DataSourceEnvironmentId)
             .NotEmpty();
 
         RuleFor(x => x.Key)

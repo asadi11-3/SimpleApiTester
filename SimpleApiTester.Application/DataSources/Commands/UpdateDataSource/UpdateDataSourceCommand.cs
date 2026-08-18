@@ -8,7 +8,6 @@ namespace SimpleApiTester.Application.DataSources.Commands.UpdateDataSource
     public sealed record UpdateDataSourceCommand(
      Guid Id,
      string Key,
-     string BaseUrl,
      bool IsActive
- ) : IRequest;
+  ) : IRequest;
 }

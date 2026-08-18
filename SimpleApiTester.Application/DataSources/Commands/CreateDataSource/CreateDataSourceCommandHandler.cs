@@ -20,7 +20,6 @@ internal sealed class CreateDataSourceCommandHandler
         CancellationToken cancellationToken)
     {
         var normalizedKey = request.Key.Trim();
-        var normalizedBaseUrl = request.BaseUrl.Trim().TrimEnd('/');
 
         var exists = await _dbContext.DataSources
             .AnyAsync(
@@ -37,7 +36,6 @@ internal sealed class CreateDataSourceCommandHandler
         {
             Id = Guid.NewGuid(),
             Key = normalizedKey,
-            BaseUrl = normalizedBaseUrl,
             IsActive = true
         };
 

@@ -26,7 +26,7 @@ namespace SimpleApiTester.API.Controllers
             CancellationToken cancellationToken)
         {
             var id = await _sender.Send(
-                new CreateDataSourceCommand(request.Key, request.BaseUrl),
+                new CreateDataSourceCommand(request.Key),
                 cancellationToken);
 
             return CreatedAtAction(
@@ -68,7 +68,6 @@ namespace SimpleApiTester.API.Controllers
                 new UpdateDataSourceCommand(
                     id,
                     request.Key,
-                    request.BaseUrl,
                     request.IsActive),
                 cancellationToken);
 

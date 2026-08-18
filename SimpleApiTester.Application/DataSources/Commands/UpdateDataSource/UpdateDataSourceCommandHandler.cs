@@ -30,7 +30,6 @@ namespace SimpleApiTester.Application.DataSources.Commands.UpdateDataSource
                 throw new KeyNotFoundException("DataSource not found.");
 
             var normalizedKey = request.Key.Trim();
-            var normalizedBaseUrl = request.BaseUrl.Trim().TrimEnd('/');
 
             var duplicate = await _dbContext.DataSources
                 .AnyAsync(
@@ -43,7 +42,6 @@ namespace SimpleApiTester.Application.DataSources.Commands.UpdateDataSource
                     $"DataSource with key '{normalizedKey}' already exists.");
 
             dataSource.Key = normalizedKey;
-            dataSource.BaseUrl = normalizedBaseUrl;
             dataSource.IsActive = request.IsActive;
 
             await _dbContext.SaveChangesAsync(cancellationToken);

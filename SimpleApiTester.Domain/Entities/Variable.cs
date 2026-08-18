@@ -4,7 +4,7 @@ public class Variable
 {
     public Guid Id { get; set; }
 
-    public Guid DataSourceId { get; set; }
+    public Guid DataSourceEnvironmentId { get; set; }
 
     public string Key { get; set; } = string.Empty;
 
@@ -12,5 +12,5 @@ public class Variable
 
     public bool IsEnabled { get; set; }
 
-    public DataSource DataSource { get; set; } = null!;
+    public DataSourceEnvironment DataSourceEnvironment { get; set; } = null!;
 }

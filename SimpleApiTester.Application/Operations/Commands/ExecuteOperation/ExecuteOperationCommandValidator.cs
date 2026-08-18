@@ -9,5 +9,8 @@ public sealed class ExecuteOperationCommandValidator
     {
         RuleFor(x => x.Id)
             .NotEmpty();
+
+        RuleFor(x => x.EnvironmentId)
+            .NotEmpty();
     }
 }
