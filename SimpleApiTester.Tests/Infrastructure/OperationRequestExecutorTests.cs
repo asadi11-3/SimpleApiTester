@@ -8,6 +8,8 @@ namespace SimpleApiTester.Tests.Infrastructure;
 
 public sealed class OperationRequestExecutorTests
 {
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
+
     [Fact]
     public async Task ExecuteAsync_Post_WithJsonBody_UsesConfiguredJsonContentType()
     {
@@ -20,6 +22,7 @@ public sealed class OperationRequestExecutorTests
                 Domain.Enum.HttpMethodType.Post,
                 "{\"title\":\"SimpleApiTester\"}",
                 "application/json"),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.NotNull(context.Request);
@@ -41,6 +44,7 @@ public sealed class OperationRequestExecutorTests
                 Domain.Enum.HttpMethodType.Post,
                 "Hello from SimpleApiTester",
                 "text/plain"),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.Equal("text/plain; charset=utf-8", context.Request!.Content!.Headers.ContentType!.ToString());
@@ -60,6 +64,7 @@ public sealed class OperationRequestExecutorTests
                 Domain.Enum.HttpMethodType.Post,
                 body,
                 "application/xml"),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.Equal("application/xml; charset=utf-8", context.Request!.Content!.Headers.ContentType!.ToString());
@@ -79,6 +84,7 @@ public sealed class OperationRequestExecutorTests
                 Domain.Enum.HttpMethodType.Post,
                 body,
                 "application/json"),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.Equal("application/json; charset=utf-8", context.Request!.Content!.Headers.ContentType!.ToString());
@@ -98,6 +104,7 @@ public sealed class OperationRequestExecutorTests
                 Domain.Enum.HttpMethodType.Post,
                 null,
                 null),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.Null(context.Request!.Content);
@@ -115,6 +122,7 @@ public sealed class OperationRequestExecutorTests
                 Domain.Enum.HttpMethodType.Post,
                 string.Empty,
                 "text/plain"),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.NotNull(context.Request!.Content);
@@ -134,6 +142,7 @@ public sealed class OperationRequestExecutorTests
                 Domain.Enum.HttpMethodType.Post,
                 "{\"name\":\"John\"}",
                 null),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.Equal("application/json; charset=utf-8", context.Request!.Content!.Headers.ContentType!.ToString());
@@ -151,6 +160,7 @@ public sealed class OperationRequestExecutorTests
                 Domain.Enum.HttpMethodType.Post,
                 "{\"name\":\"John\"}",
                 "application/json; charset=utf-8"),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.Equal("application/json; charset=utf-8", context.Request!.Content!.Headers.ContentType!.ToString());
@@ -168,6 +178,7 @@ public sealed class OperationRequestExecutorTests
                 Domain.Enum.HttpMethodType.Get,
                 "{\"ignored\":true}",
                 "application/json"),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.Equal(HttpMethod.Get, context.Request!.Method);
@@ -189,6 +200,7 @@ public sealed class OperationRequestExecutorTests
                 methodType,
                 "payload",
                 "text/plain"),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.NotNull(context.Request!.Content);
@@ -211,11 +223,98 @@ public sealed class OperationRequestExecutorTests
                     new ResolvedRequestHeader("Authorization", "Bearer token"),
                     new ResolvedRequestHeader("X-Trace", "trace-1")
                 ]),
+            RequestTimeout,
             CancellationToken.None);
 
         Assert.NotNull(context.Request);
         Assert.Equal("Bearer token", context.Request!.Headers.GetValues("Authorization").Single());
         Assert.Equal("trace-1", context.Request.Headers.GetValues("X-Trace").Single());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenRemoteRespondsWith504_ReturnsNormalRemoteResult()
+    {
+        var context = CreateContext();
+        context.Response = new HttpResponseMessage(HttpStatusCode.GatewayTimeout)
+        {
+            Content = new StringContent("gateway timeout")
+        };
+        var executor = CreateExecutor(context);
+
+        var result = await executor.ExecuteAsync(
+            new OperationHttpRequest("https://example.com/posts", Domain.Enum.HttpMethodType.Get, null, null),
+            RequestTimeout,
+            CancellationToken.None);
+
+        Assert.False(result.HasExecutionError);
+        Assert.Equal(504, result.StatusCode);
+        Assert.False(result.IsSuccessStatusCode);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenResponseBodyStallsBeyondTimeout_ReturnsTimeout()
+    {
+        var context = CreateContext();
+        context.Response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new SlowReadableContent()
+        };
+        var executor = CreateExecutor(context);
+
+        var result = await executor.ExecuteAsync(
+            new OperationHttpRequest("https://example.com/posts", Domain.Enum.HttpMethodType.Get, null, null),
+            TimeSpan.FromMilliseconds(20),
+            CancellationToken.None);
+
+        Assert.True(result.HasExecutionError);
+        Assert.Equal("Timeout", result.ErrorType);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenCallerCancels_PropagatesCancellation()
+    {
+        var context = CreateContext();
+        context.ResponseFactory = async (_, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        };
+        var executor = CreateExecutor(context);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            executor.ExecuteAsync(
+                new OperationHttpRequest("https://example.com/posts", Domain.Enum.HttpMethodType.Get, null, null),
+                RequestTimeout,
+                cts.Token));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenDifferentTimeoutsRunConcurrently_DoNotInterfere()
+    {
+        var sharedHttpClient = new HttpClient(new DelayedHandler())
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+            BaseAddress = new Uri("https://example.com")
+        };
+        var executor = new OperationRequestExecutor(new SharedHttpClientFactory(sharedHttpClient));
+
+        var shortTask = executor.ExecuteAsync(
+            new OperationHttpRequest("https://example.com/slow", Domain.Enum.HttpMethodType.Get, null, null),
+            TimeSpan.FromMilliseconds(20),
+            CancellationToken.None);
+        var longTask = executor.ExecuteAsync(
+            new OperationHttpRequest("https://example.com/fast", Domain.Enum.HttpMethodType.Get, null, null),
+            TimeSpan.FromMilliseconds(200),
+            CancellationToken.None);
+
+        var results = await Task.WhenAll(shortTask, longTask);
+
+        Assert.True(results[0].HasExecutionError);
+        Assert.Equal("Timeout", results[0].ErrorType);
+        Assert.False(results[1].HasExecutionError);
+        Assert.Equal(200, results[1].StatusCode);
     }
 
     private static OperationRequestExecutor CreateExecutor(RequestCaptureContext context)
@@ -238,6 +337,18 @@ public sealed class OperationRequestExecutorTests
             {
                 BaseAddress = new Uri("https://example.com")
             };
+    }
+
+    private sealed class SharedHttpClientFactory : IHttpClientFactory
+    {
+        private readonly HttpClient _httpClient;
+
+        public SharedHttpClientFactory(HttpClient httpClient)
+        {
+            _httpClient = httpClient;
+        }
+
+        public HttpClient CreateClient(string name) => _httpClient;
     }
 
     private sealed class CaptureHandler : HttpMessageHandler
@@ -271,6 +382,20 @@ public sealed class OperationRequestExecutorTests
                 _context.Request.Content = content;
             }
 
+            return await _context.ResponseFactory(request, cancellationToken);
+        }
+    }
+
+    private sealed class DelayedHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var delay = request.RequestUri!.AbsoluteUri.Contains("slow", StringComparison.OrdinalIgnoreCase)
+                ? TimeSpan.FromMilliseconds(100)
+                : TimeSpan.FromMilliseconds(10);
+
+            await Task.Delay(delay, cancellationToken);
+
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("ok")
@@ -278,8 +403,85 @@ public sealed class OperationRequestExecutorTests
         }
     }
 
+    private sealed class SlowReadableContent : HttpContent
+    {
+        public SlowReadableContent()
+        {
+            Headers.ContentType = MediaTypeHeaderValue.Parse("text/plain");
+        }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            return SerializeToStreamAsync(stream, context, CancellationToken.None);
+        }
+
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync()
+        {
+            Stream stream = new SlowReadStream();
+            return Task.FromResult(stream);
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = -1;
+            return false;
+        }
+    }
+
+    private sealed class SlowReadStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Flush() => throw new NotSupportedException();
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+
+        public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+    }
+
     private sealed class RequestCaptureContext
     {
         public HttpRequestMessage? Request { get; set; }
+
+        public HttpResponseMessage Response { get; set; } = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("ok")
+        };
+
+        public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> ResponseFactory { get; set; }
+            = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("ok")
+            });
+
+        public RequestCaptureContext()
+        {
+            ResponseFactory = (_, _) => Task.FromResult(Response);
+        }
     }
 }

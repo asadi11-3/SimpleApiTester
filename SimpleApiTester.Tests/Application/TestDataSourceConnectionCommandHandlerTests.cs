@@ -129,7 +129,28 @@ public sealed class TestDataSourceConnectionCommandHandlerTests
         var response = await handler.Handle(new TestDataSourceConnectionCommand(dataSourceId, environmentId), CancellationToken.None);
 
         Assert.Equal("https://dev.example.com/root", tester.BaseUrl);
+        Assert.Equal(TimeSpan.FromSeconds(DataSourceTimeoutPolicy.DefaultTimeoutSeconds), tester.Timeout);
         Assert.Equal(expected, response);
+    }
+
+    [Fact]
+    public async Task Handle_WhenDataSourceTimeoutIsConfigured_PassesResolvedTimeoutToTester()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId, defaultTimeoutSeconds: 5);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://dev.example.com/root");
+        await dbContext.SaveChangesAsync();
+
+        var tester = new CapturingConnectionTester();
+        var handler = CreateHandler(dbContext, tester);
+
+        await handler.Handle(new TestDataSourceConnectionCommand(dataSourceId, environmentId), CancellationToken.None);
+
+        Assert.Equal(TimeSpan.FromSeconds(5), tester.Timeout);
     }
 
     [Fact]
@@ -160,12 +181,18 @@ public sealed class TestDataSourceConnectionCommandHandlerTests
     private static TestDataSourceConnectionCommandHandler CreateHandler(AppDbContext dbContext, CapturingConnectionTester tester)
         => new(dbContext, tester);
 
-    private static void SeedDataSource(AppDbContext dbContext, Guid dataSourceId, string key = "jsonplaceholder", bool isActive = true)
+    private static void SeedDataSource(
+        AppDbContext dbContext,
+        Guid dataSourceId,
+        string key = "jsonplaceholder",
+        bool isActive = true,
+        int? defaultTimeoutSeconds = null)
     {
         dbContext.DataSources.Add(new DataSource
         {
             Id = dataSourceId,
             Key = key,
+            DefaultTimeoutSeconds = defaultTimeoutSeconds,
             IsActive = isActive
         });
     }
@@ -208,9 +235,12 @@ public sealed class TestDataSourceConnectionCommandHandlerTests
 
         public string? BaseUrl { get; private set; }
 
-        public Task<TestDataSourceConnectionResponse> TestConnectionAsync(string baseUrl, CancellationToken cancellationToken)
+        public TimeSpan? Timeout { get; private set; }
+
+        public Task<TestDataSourceConnectionResponse> TestConnectionAsync(string baseUrl, TimeSpan timeout, CancellationToken cancellationToken)
         {
             BaseUrl = baseUrl;
+            Timeout = timeout;
             return Task.FromResult(_response);
         }
     }

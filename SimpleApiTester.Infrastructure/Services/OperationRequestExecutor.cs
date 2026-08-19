@@ -22,12 +22,16 @@ internal sealed class OperationRequestExecutor : IOperationRequestExecutor
 
     public async Task<ExecuteOperationResponse> ExecuteAsync(
         OperationHttpRequest request,
+        TimeSpan timeout,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
 
         try
         {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(timeout);
+
             using var requestMessage = new HttpRequestMessage(
                 CreateHttpMethod(request.MethodType),
                 request.Url);
@@ -60,11 +64,11 @@ internal sealed class OperationRequestExecutor : IOperationRequestExecutor
             using var response = await httpClient.SendAsync(
                 requestMessage,
                 HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
+                timeoutCts.Token);
 
             var responseBody = response.Content is null
                 ? null
-                : await response.Content.ReadAsStringAsync(cancellationToken);
+                : await response.Content.ReadAsStringAsync(timeoutCts.Token);
 
             stopwatch.Stop();
 

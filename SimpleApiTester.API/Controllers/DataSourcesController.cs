@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using SimpleApiTester.API.Contracts.DataSources;
+using SimpleApiTester.Application.DataSources;
 using SimpleApiTester.Application.DataSources.Commands.CreateDataSource;
 using SimpleApiTester.Application.DataSources.Commands.DeleteDataSource;
 using SimpleApiTester.Application.DataSources.Commands.UpdateDataSource;
@@ -26,7 +27,7 @@ namespace SimpleApiTester.API.Controllers
             CancellationToken cancellationToken)
         {
             var id = await _sender.Send(
-                new CreateDataSourceCommand(request.Key),
+                new CreateDataSourceCommand(request.Key, request.DefaultTimeoutSeconds),
                 cancellationToken);
 
             return CreatedAtAction(
@@ -36,7 +37,8 @@ namespace SimpleApiTester.API.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAll(
+        [ProducesResponseType(typeof(IReadOnlyCollection<DataSourceResponse>), StatusCodes.Status200OK)]
+        public async Task<ActionResult<IReadOnlyCollection<DataSourceResponse>>> GetAll(
             CancellationToken cancellationToken)
         {
             var result = await _sender.Send(
@@ -47,7 +49,8 @@ namespace SimpleApiTester.API.Controllers
         }
 
         [HttpGet("{id:guid}")]
-        public async Task<IActionResult> GetById(
+        [ProducesResponseType(typeof(DataSourceResponse), StatusCodes.Status200OK)]
+        public async Task<ActionResult<DataSourceResponse>> GetById(
             Guid id,
             CancellationToken cancellationToken)
         {
@@ -68,7 +71,8 @@ namespace SimpleApiTester.API.Controllers
                 new UpdateDataSourceCommand(
                     id,
                     request.Key,
-                    request.IsActive),
+                    request.IsActive,
+                    request.DefaultTimeoutSeconds),
                 cancellationToken);
 
             return NoContent();

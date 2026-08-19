@@ -6,6 +6,7 @@ using SimpleApiTester.Application.Abstractions.Http;
 using SimpleApiTester.Application.Abstractions.Persistence;
 using SimpleApiTester.Infrastructure.Persistence;
 using SimpleApiTester.Infrastructure.Services;
+using System;
 
 namespace SimpleApiTester.Infrastructure
 {
@@ -15,8 +16,15 @@ namespace SimpleApiTester.Infrastructure
             this IServiceCollection services,
             IConfiguration configuration)
         {
-            services.AddHttpClient("OperationExecutor");
-            services.AddHttpClient("ConnectionTester");
+            services.AddHttpClient("OperationExecutor", client =>
+            {
+                client.Timeout = Timeout.InfiniteTimeSpan;
+            });
+
+            services.AddHttpClient("ConnectionTester", client =>
+            {
+                client.Timeout = Timeout.InfiniteTimeSpan;
+            });
 
             services.AddScoped<IOperationRequestExecutor, OperationRequestExecutor>();
             services.AddScoped<IDataSourceConnectionTester, DataSourceConnectionTester>();

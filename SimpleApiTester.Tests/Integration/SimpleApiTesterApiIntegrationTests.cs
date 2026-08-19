@@ -41,6 +41,90 @@ public sealed class SimpleApiTesterApiIntegrationTests
         Assert.Equal(created.Id, dataSource!.Id);
         Assert.Equal("jsonplaceholder", dataSource.Key);
         Assert.True(dataSource.IsActive);
+        Assert.Null(dataSource.DefaultTimeoutSeconds);
+    }
+
+    [Fact]
+    public async Task DataSource_Post_WithConfiguredTimeout_ReturnExpectedPayload()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var createResponse = await client.PostAsJsonAsync(
+            "/api/data-sources",
+            new { key = "hr-system", defaultTimeoutSeconds = 5 });
+
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+        var created = await createResponse.Content.ReadFromJsonAsync<CreatedIdResponse>();
+        var getResponse = await client.GetAsync($"/api/data-sources/{created!.Id}");
+        var dataSource = await getResponse.Content.ReadFromJsonAsync<DataSourceDto>();
+
+        Assert.NotNull(dataSource);
+        Assert.Equal(5, dataSource!.DefaultTimeoutSeconds);
+    }
+
+    [Fact]
+    public async Task DataSource_Put_UpdatesAndClearsTimeout()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client, defaultTimeoutSeconds: 5);
+
+        var updateResponse = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}",
+            new { key = "jsonplaceholder", isActive = true, defaultTimeoutSeconds = 20 });
+
+        Assert.Equal(HttpStatusCode.NoContent, updateResponse.StatusCode);
+
+        var updated = await client.GetFromJsonAsync<DataSourceDto>($"/api/data-sources/{dataSourceId}");
+        Assert.NotNull(updated);
+        Assert.Equal(20, updated!.DefaultTimeoutSeconds);
+
+        var clearResponse = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}",
+            new { key = "jsonplaceholder", isActive = true, defaultTimeoutSeconds = (int?)null });
+
+        Assert.Equal(HttpStatusCode.NoContent, clearResponse.StatusCode);
+
+        var cleared = await client.GetFromJsonAsync<DataSourceDto>($"/api/data-sources/{dataSourceId}");
+        Assert.NotNull(cleared);
+        Assert.Null(cleared!.DefaultTimeoutSeconds);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(301)]
+    public async Task DataSource_Post_InvalidTimeout_ReturnsBadRequest(int defaultTimeoutSeconds)
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/data-sources",
+            new { key = "jsonplaceholder", defaultTimeoutSeconds });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(301)]
+    public async Task DataSource_Put_InvalidTimeout_ReturnsBadRequest(int defaultTimeoutSeconds)
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}",
+            new { key = "jsonplaceholder", isActive = true, defaultTimeoutSeconds });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
@@ -200,6 +284,55 @@ public sealed class SimpleApiTesterApiIntegrationTests
     }
 
     [Fact]
+    public async Task DataSource_TestConnection_WhenLocalTimeoutOccurs_ReturnsTimeout()
+    {
+        using var remoteHttpStub = new RemoteHttpStub
+        {
+            Responder = _ => throw new OperationCanceledException()
+        };
+        using var factory = new SimpleApiTesterApiFactory(remoteHttpStub);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client, defaultTimeoutSeconds: 2);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId, baseUrl: "https://remote.test");
+
+        var response = await TestConnectionAsync(client, dataSourceId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<TestDataSourceConnectionDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(result);
+        Assert.False(result!.IsReachable);
+        Assert.Equal("Timeout", result.ErrorType);
+        Assert.Equal("The HTTP request timed out.", result.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.RequestTimeout, 408)]
+    [InlineData(HttpStatusCode.GatewayTimeout, 504)]
+    public async Task DataSource_TestConnection_Remote408And504_StillReturnReachable(HttpStatusCode remoteStatusCode, int expectedStatusCode)
+    {
+        using var remoteHttpStub = new RemoteHttpStub
+        {
+            Responder = _ => Task.FromResult(new HttpResponseMessage(remoteStatusCode))
+        };
+        using var factory = new SimpleApiTesterApiFactory(remoteHttpStub);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client, defaultTimeoutSeconds: 2);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId, baseUrl: "https://remote.test");
+
+        var response = await TestConnectionAsync(client, dataSourceId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<TestDataSourceConnectionDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(result);
+        Assert.True(result!.IsReachable);
+        Assert.Equal(expectedStatusCode, result.StatusCode);
+        Assert.False(result.IsSuccessStatusCode);
+        Assert.Null(result.ErrorType);
+    }
+
+    [Fact]
     public async Task DataSource_TestConnection_InvalidDataSource_ReturnsNotFound_AndDoesNotSendHttp()
     {
         using var remoteHttpStub = new RemoteHttpStub();
@@ -250,6 +383,59 @@ public sealed class SimpleApiTesterApiIntegrationTests
         var inactiveEnvironmentResponse = await TestConnectionAsync(client, activeDataSourceId, inactiveEnvironmentId);
         Assert.Equal(HttpStatusCode.Conflict, inactiveEnvironmentResponse.StatusCode);
         Assert.Empty(remoteHttpStub.Requests);
+    }
+
+    [Fact]
+    public async Task Execute_WhenLocalTimeoutOccurs_ReturnsTimeoutExecutionError()
+    {
+        using var remoteHttpStub = new RemoteHttpStub
+        {
+            Responder = _ => throw new OperationCanceledException()
+        };
+        using var factory = new SimpleApiTesterApiFactory(remoteHttpStub);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client, defaultTimeoutSeconds: 2);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId, baseUrl: "https://remote.test");
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(result);
+        Assert.True(result!.HasExecutionError);
+        Assert.Equal("Timeout", result.ErrorType);
+        Assert.Equal("The HTTP request timed out.", result.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.RequestTimeout, 408)]
+    [InlineData(HttpStatusCode.GatewayTimeout, 504)]
+    public async Task Execute_Remote408And504_StillReturnNormalRemoteResponses(HttpStatusCode remoteStatusCode, int expectedStatusCode)
+    {
+        using var remoteHttpStub = new RemoteHttpStub
+        {
+            Responder = _ => Task.FromResult(new HttpResponseMessage(remoteStatusCode)
+            {
+                Content = new StringContent("timed out", Encoding.UTF8, "text/plain")
+            })
+        };
+        using var factory = new SimpleApiTesterApiFactory(remoteHttpStub);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client, defaultTimeoutSeconds: 2);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId, baseUrl: "https://remote.test");
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(result);
+        Assert.False(result!.HasExecutionError);
+        Assert.Equal(expectedStatusCode, result.StatusCode);
+        Assert.False(result.IsSuccessStatusCode);
     }
 
     [Fact]
@@ -1418,11 +1604,15 @@ public sealed class SimpleApiTesterApiIntegrationTests
         Assert.Equal(HttpStatusCode.NotFound, variablesResponse.StatusCode);
     }
 
-    private static async Task<Guid> CreateDataSourceAsync(HttpClient client, string? key = null)
+    private static async Task<Guid> CreateDataSourceAsync(HttpClient client, string? key = null, int? defaultTimeoutSeconds = null)
     {
         var response = await client.PostAsJsonAsync(
             "/api/data-sources",
-            new { key = key ?? $"jsonplaceholder-{Guid.NewGuid():N}" });
+            new
+            {
+                key = key ?? $"jsonplaceholder-{Guid.NewGuid():N}",
+                defaultTimeoutSeconds
+            });
 
         response.EnsureSuccessStatusCode();
 
@@ -1545,7 +1735,7 @@ public sealed class SimpleApiTesterApiIntegrationTests
 
     private sealed record CreatedIdResponse(Guid Id);
 
-    private sealed record DataSourceDto(Guid Id, string Key, bool IsActive);
+    private sealed record DataSourceDto(Guid Id, string Key, bool IsActive, int? DefaultTimeoutSeconds);
 
     private sealed record DataSourceEnvironmentDto(Guid Id, Guid DataSourceId, string Name, string BaseUrl, bool IsActive);
 

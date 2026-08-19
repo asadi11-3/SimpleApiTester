@@ -1,5 +1,8 @@
 using SimpleApiTester.Application.DataSources;
+using SimpleApiTester.Infrastructure;
 using SimpleApiTester.Infrastructure.Services;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using System.Net;
 using System.Net.Http.Headers;
 
@@ -7,6 +10,8 @@ namespace SimpleApiTester.Tests.Infrastructure;
 
 public sealed class DataSourceConnectionTesterTests
 {
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
+
     [Theory]
     [InlineData(HttpStatusCode.OK, true)]
     [InlineData(HttpStatusCode.NotFound, false)]
@@ -16,7 +21,7 @@ public sealed class DataSourceConnectionTesterTests
     {
         var context = new RequestCaptureContext
         {
-            ResponseFactory = _ => Task.FromResult(new HttpResponseMessage(statusCode)
+            ResponseFactory = (_, _) => Task.FromResult(new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(string.Empty)
                 {
@@ -30,7 +35,7 @@ public sealed class DataSourceConnectionTesterTests
 
         var tester = CreateTester(context);
 
-        var result = await tester.TestConnectionAsync("https://example.com/root", CancellationToken.None);
+        var result = await tester.TestConnectionAsync("https://example.com/root", RequestTimeout, CancellationToken.None);
 
         Assert.True(result.IsReachable);
         Assert.Equal((int)statusCode, result.StatusCode);
@@ -49,12 +54,12 @@ public sealed class DataSourceConnectionTesterTests
     {
         var context = new RequestCaptureContext
         {
-            ResponseFactory = _ => throw new OperationCanceledException()
+            ResponseFactory = (_, _) => throw new OperationCanceledException()
         };
 
         var tester = CreateTester(context);
 
-        var result = await tester.TestConnectionAsync("https://example.com/root", CancellationToken.None);
+        var result = await tester.TestConnectionAsync("https://example.com/root", RequestTimeout, CancellationToken.None);
 
         Assert.False(result.IsReachable);
         Assert.Null(result.StatusCode);
@@ -67,18 +72,74 @@ public sealed class DataSourceConnectionTesterTests
     {
         var context = new RequestCaptureContext
         {
-            ResponseFactory = _ => throw new HttpRequestException("socket failure should not leak")
+            ResponseFactory = (_, _) => throw new HttpRequestException("socket failure should not leak")
         };
 
         var tester = CreateTester(context);
 
-        var result = await tester.TestConnectionAsync("https://example.com/root", CancellationToken.None);
+        var result = await tester.TestConnectionAsync("https://example.com/root", RequestTimeout, CancellationToken.None);
 
         Assert.False(result.IsReachable);
         Assert.Null(result.StatusCode);
         Assert.Equal("HttpRequestError", result.ErrorType);
         Assert.Equal("Unable to connect to target.", result.ErrorMessage);
         Assert.DoesNotContain("socket failure", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_WhenCallerCancels_PropagatesCancellation()
+    {
+        var context = new RequestCaptureContext
+        {
+            ResponseFactory = async (_, cancellationToken) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+        };
+
+        var tester = CreateTester(context);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            tester.TestConnectionAsync("https://example.com/root", RequestTimeout, cts.Token));
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_DoesNotMutateSharedHttpClientTimeout()
+    {
+        var sharedHttpClient = new HttpClient(new DelayedHandler())
+        {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+
+        var tester = new DataSourceConnectionTester(new SharedHttpClientFactory(sharedHttpClient));
+
+        await tester.TestConnectionAsync("https://example.com/fast", TimeSpan.FromMilliseconds(20), CancellationToken.None);
+        await tester.TestConnectionAsync("https://example.com/fast", TimeSpan.FromMilliseconds(200), CancellationToken.None);
+
+        Assert.Equal(Timeout.InfiniteTimeSpan, sharedHttpClient.Timeout);
+    }
+
+    [Fact]
+    public void AddInfrastructure_ConfiguresNamedHttpClientsWithInfiniteTimeout()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] = "Server=(localdb)\\mssqllocaldb;Database=SimpleApiTesterTests;Trusted_Connection=True;TrustServerCertificate=True"
+            })
+            .Build();
+
+        services.AddInfrastructure(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        Assert.Equal(Timeout.InfiniteTimeSpan, factory.CreateClient("OperationExecutor").Timeout);
+        Assert.Equal(Timeout.InfiniteTimeSpan, factory.CreateClient("ConnectionTester").Timeout);
     }
 
     private static DataSourceConnectionTester CreateTester(RequestCaptureContext context)
@@ -97,6 +158,18 @@ public sealed class DataSourceConnectionTesterTests
             => new(new CaptureHandler(_context));
     }
 
+    private sealed class SharedHttpClientFactory : IHttpClientFactory
+    {
+        private readonly HttpClient _httpClient;
+
+        public SharedHttpClientFactory(HttpClient httpClient)
+        {
+            _httpClient = httpClient;
+        }
+
+        public HttpClient CreateClient(string name) => _httpClient;
+    }
+
     private sealed class CaptureHandler : HttpMessageHandler
     {
         private readonly RequestCaptureContext _context;
@@ -109,7 +182,21 @@ public sealed class DataSourceConnectionTesterTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             _context.Request = request;
-            return _context.ResponseFactory(request);
+            return _context.ResponseFactory(request, cancellationToken);
+        }
+    }
+
+    private sealed class DelayedHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var delay = request.RequestUri!.AbsoluteUri.Contains("slow", StringComparison.OrdinalIgnoreCase)
+                ? TimeSpan.FromMilliseconds(100)
+                : TimeSpan.FromMilliseconds(10);
+
+            await Task.Delay(delay, cancellationToken);
+
+            return new HttpResponseMessage(HttpStatusCode.OK);
         }
     }
 
@@ -117,7 +204,7 @@ public sealed class DataSourceConnectionTesterTests
     {
         public HttpRequestMessage? Request { get; set; }
 
-        public Func<HttpRequestMessage, Task<HttpResponseMessage>> ResponseFactory { get; set; }
-            = _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> ResponseFactory { get; set; }
+            = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
     }
 }

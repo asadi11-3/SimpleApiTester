@@ -15,19 +15,22 @@ internal sealed class DataSourceConnectionTester : IDataSourceConnectionTester
         _httpClientFactory = httpClientFactory;
     }
 
-    public async Task<TestDataSourceConnectionResponse> TestConnectionAsync(string baseUrl, CancellationToken cancellationToken)
+    public async Task<TestDataSourceConnectionResponse> TestConnectionAsync(string baseUrl, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
 
         try
         {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(timeout);
+
             using var request = new HttpRequestMessage(HttpMethod.Get, baseUrl);
             var httpClient = _httpClientFactory.CreateClient(ClientName);
 
             using var response = await httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
+                timeoutCts.Token);
 
             stopwatch.Stop();
 

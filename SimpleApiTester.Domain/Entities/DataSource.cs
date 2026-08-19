@@ -6,6 +6,8 @@ public class DataSource
 
     public string Key { get; set; } = string.Empty;
 
+    public int? DefaultTimeoutSeconds { get; set; }
+
     public bool IsActive { get; set; }
 
     public DataSourceAuthentication? Authentication { get; set; }

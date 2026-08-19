@@ -30,6 +30,7 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - CRUD support
 - unique `Key`
 - `IsActive`
+- optional `DefaultTimeoutSeconds`
 - no `BaseUrl`
 - own `Operations`, `Headers`, and `Environments`
 
@@ -212,6 +213,23 @@ Any received remote HTTP response still means the target is reachable, including
 Transport failure or timeout means the target is unreachable.
 
 This feature does not execute an operation and does not validate the target API's business correctness.
+
+## Timeout Policy
+Outbound HTTP requests use a data-source-level timeout policy.
+
+- configure `DataSource.DefaultTimeoutSeconds` as `null` or `1..300`
+- `null` means the application fallback timeout is used
+- the fallback timeout is `100` seconds
+- the same effective timeout applies to:
+  - operation execution
+  - test connection
+- timeouts are data-source-level only in this version
+- operation-specific timeout overrides do not exist
+- environment-specific timeout overrides do not exist
+
+Important distinction:
+- a local SimpleApiTester timeout means no full outbound HTTP response completed before the effective timeout elapsed
+- a remote `408` or `504` is still a normal received HTTP response, not a local timeout
 
 ## Database Setup
 Update `SimpleApiTester.API/appsettings.json` with a SQL Server connection string for `ConnectionStrings:DefaultConnection`.

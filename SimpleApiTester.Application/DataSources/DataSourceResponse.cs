@@ -7,4 +7,5 @@ namespace SimpleApiTester.Application.DataSources;
 public sealed record DataSourceResponse(
     Guid Id,
     string Key,
-    bool IsActive);
+    bool IsActive,
+    int? DefaultTimeoutSeconds);

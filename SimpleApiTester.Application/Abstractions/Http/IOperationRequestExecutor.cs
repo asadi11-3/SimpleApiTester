@@ -7,6 +7,7 @@ public interface IOperationRequestExecutor
 {
     Task<ExecuteOperationResponse> ExecuteAsync(
         OperationHttpRequest request,
+        TimeSpan timeout,
         CancellationToken cancellationToken);
 }
 

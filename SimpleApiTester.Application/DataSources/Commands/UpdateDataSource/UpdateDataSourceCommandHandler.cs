@@ -43,6 +43,7 @@ namespace SimpleApiTester.Application.DataSources.Commands.UpdateDataSource
 
             dataSource.Key = normalizedKey;
             dataSource.IsActive = request.IsActive;
+            dataSource.DefaultTimeoutSeconds = request.DefaultTimeoutSeconds;
 
             await _dbContext.SaveChangesAsync(cancellationToken);
         }

@@ -28,7 +28,8 @@ internal sealed class TestDataSourceConnectionCommandHandler
             .Where(x => x.Id == request.DataSourceId)
             .Select(x => new
             {
-                x.IsActive
+                x.IsActive,
+                x.DefaultTimeoutSeconds
             })
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -62,6 +63,9 @@ internal sealed class TestDataSourceConnectionCommandHandler
             throw new InvalidOperationException("Cannot execute an operation for an inactive environment.");
         }
 
-        return await _dataSourceConnectionTester.TestConnectionAsync(environment.BaseUrl, cancellationToken);
+        return await _dataSourceConnectionTester.TestConnectionAsync(
+            environment.BaseUrl,
+            DataSourceTimeoutPolicy.Resolve(dataSource.DefaultTimeoutSeconds),
+            cancellationToken);
     }
 }

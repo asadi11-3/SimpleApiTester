@@ -27,7 +27,8 @@ namespace SimpleApiTester.Application.DataSources.Queries.GetDataSources;
                 .Select(x => new DataSourceResponse(
                     x.Id,
                     x.Key,
-                    x.IsActive))
+                    x.IsActive,
+                    x.DefaultTimeoutSeconds))
                 .ToListAsync(cancellationToken);
         }
     }

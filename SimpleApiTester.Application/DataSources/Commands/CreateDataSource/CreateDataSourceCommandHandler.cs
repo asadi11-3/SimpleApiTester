@@ -36,6 +36,7 @@ internal sealed class CreateDataSourceCommandHandler
         {
             Id = Guid.NewGuid(),
             Key = normalizedKey,
+            DefaultTimeoutSeconds = request.DefaultTimeoutSeconds,
             IsActive = true
         };
 

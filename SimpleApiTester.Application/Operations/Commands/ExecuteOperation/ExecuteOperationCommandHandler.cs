@@ -4,6 +4,7 @@ using SimpleApiTester.Application.DataSourceAuthentications;
 using SimpleApiTester.Application.Abstractions.Headers;
 using SimpleApiTester.Application.Abstractions.Http;
 using SimpleApiTester.Application.Abstractions.Persistence;
+using SimpleApiTester.Application.DataSources;
 using SimpleApiTester.Domain.Entities;
 using SimpleApiTester.Domain.Enum;
 
@@ -55,7 +56,8 @@ internal sealed class ExecuteOperationCommandHandler
             .Where(x => x.Id == operation.DataSourceId)
             .Select(x => new
             {
-                x.IsActive
+                x.IsActive,
+                x.DefaultTimeoutSeconds
             })
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -180,6 +182,7 @@ internal sealed class ExecuteOperationCommandHandler
                 operation.Body,
                 operation.ContentType,
                 finalHeaders),
+            DataSourceTimeoutPolicy.Resolve(dataSource.DefaultTimeoutSeconds),
             cancellationToken);
     }
 

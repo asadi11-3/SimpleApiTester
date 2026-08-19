@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SimpleApiTester.Application.Abstractions.Headers;
 using SimpleApiTester.Application.Abstractions.Http;
+using SimpleApiTester.Application.DataSources;
 using SimpleApiTester.Application.Operations.Commands.ExecuteOperation;
 using SimpleApiTester.Domain.Entities;
 using SimpleApiTester.Domain.Enum;
@@ -53,6 +54,29 @@ public sealed class ExecuteOperationCommandHandlerTests
         Assert.Equal(HttpMethodType.Post, executor.Request.MethodType);
         Assert.Equal("{\"title\":\"hello\"}", executor.Request.Body);
         Assert.Equal("application/json", executor.Request.ContentType);
+        Assert.Equal(TimeSpan.FromSeconds(DataSourceTimeoutPolicy.DefaultTimeoutSeconds), executor.Timeout);
+    }
+
+    [Fact]
+    public async Task Handle_WhenDataSourceTimeoutIsConfigured_PassesResolvedTimeoutToExecutor()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId, defaultTimeoutSeconds: 5);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId);
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.Equal(TimeSpan.FromSeconds(5), executor.Timeout);
     }
 
     [Fact]
@@ -670,12 +694,18 @@ public sealed class ExecuteOperationCommandHandlerTests
     private static ExecuteOperationCommandHandler CreateHandler(AppDbContext dbContext, CapturingExecutor executor)
         => new(dbContext, new StubExternalHeaderValueResolver(), executor);
 
-    private static void SeedDataSource(AppDbContext dbContext, Guid dataSourceId, string key = "jsonplaceholder", bool isActive = true)
+    private static void SeedDataSource(
+        AppDbContext dbContext,
+        Guid dataSourceId,
+        string key = "jsonplaceholder",
+        bool isActive = true,
+        int? defaultTimeoutSeconds = null)
     {
         dbContext.DataSources.Add(new DataSource
         {
             Id = dataSourceId,
             Key = key,
+            DefaultTimeoutSeconds = defaultTimeoutSeconds,
             IsActive = isActive
         });
     }
@@ -734,9 +764,12 @@ public sealed class ExecuteOperationCommandHandlerTests
     {
         public OperationHttpRequest? Request { get; private set; }
 
-        public Task<ExecuteOperationResponse> ExecuteAsync(OperationHttpRequest request, CancellationToken cancellationToken)
+        public TimeSpan? Timeout { get; private set; }
+
+        public Task<ExecuteOperationResponse> ExecuteAsync(OperationHttpRequest request, TimeSpan timeout, CancellationToken cancellationToken)
         {
             Request = request;
+            Timeout = timeout;
 
             return Task.FromResult(new ExecuteOperationResponse(
                 StatusCode: 200,

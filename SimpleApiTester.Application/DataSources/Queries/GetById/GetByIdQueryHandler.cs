@@ -27,7 +27,8 @@ namespace SimpleApiTester.Application.DataSources.Queries.GetById
                 .Select(x => new DataSourceResponse(
                     x.Id,
                     x.Key,
-                    x.IsActive))
+                    x.IsActive,
+                    x.DefaultTimeoutSeconds))
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (dataSource is null)
