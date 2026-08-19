@@ -16,8 +16,10 @@ namespace SimpleApiTester.Infrastructure
             IConfiguration configuration)
         {
             services.AddHttpClient("OperationExecutor");
+            services.AddHttpClient("ConnectionTester");
 
             services.AddScoped<IOperationRequestExecutor, OperationRequestExecutor>();
+            services.AddScoped<IDataSourceConnectionTester, DataSourceConnectionTester>();
             services.AddScoped<IExternalHeaderValueResolver, ExternalHeaderValueResolver>();
 
             services.AddDbContext<AppDbContext>(options =>

@@ -113,6 +113,146 @@ public sealed class SimpleApiTesterApiIntegrationTests
     }
 
     [Fact]
+    public async Task DataSource_TestConnection_Remote200_ReturnsReachable()
+    {
+        using var remoteHttpStub = new RemoteHttpStub
+        {
+            Responder = _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("ok", Encoding.UTF8, "text/plain")
+            })
+        };
+        using var factory = new SimpleApiTesterApiFactory(remoteHttpStub);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId, baseUrl: "https://remote.test");
+
+        var response = await TestConnectionAsync(client, dataSourceId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<TestDataSourceConnectionDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(result);
+        Assert.True(result!.IsReachable);
+        Assert.Equal(200, result.StatusCode);
+        Assert.True(result.IsSuccessStatusCode);
+        Assert.Equal("text/plain; charset=utf-8", result.ContentType);
+
+        var request = Assert.Single(remoteHttpStub.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("https://remote.test/", request.Url);
+        Assert.Null(request.Body);
+        Assert.Null(request.ContentType);
+        Assert.DoesNotContain(request.Headers, x => x.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, 404)]
+    [InlineData(HttpStatusCode.Unauthorized, 401)]
+    [InlineData(HttpStatusCode.InternalServerError, 500)]
+    public async Task DataSource_TestConnection_RemoteNonSuccessStillReturnsReachable(HttpStatusCode remoteStatusCode, int expectedStatusCode)
+    {
+        using var remoteHttpStub = new RemoteHttpStub
+        {
+            Responder = _ => Task.FromResult(new HttpResponseMessage(remoteStatusCode))
+        };
+        using var factory = new SimpleApiTesterApiFactory(remoteHttpStub);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId, baseUrl: "https://remote.test");
+
+        var response = await TestConnectionAsync(client, dataSourceId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<TestDataSourceConnectionDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(result);
+        Assert.True(result!.IsReachable);
+        Assert.Equal(expectedStatusCode, result.StatusCode);
+        Assert.False(result.IsSuccessStatusCode);
+        Assert.Null(result.ErrorType);
+        Assert.Null(result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task DataSource_TestConnection_WhenHttpRequestFails_ReturnsUnreachable()
+    {
+        using var remoteHttpStub = new RemoteHttpStub
+        {
+            Responder = _ => throw new HttpRequestException("connection refused")
+        };
+        using var factory = new SimpleApiTesterApiFactory(remoteHttpStub);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId, baseUrl: "https://remote.test");
+
+        var response = await TestConnectionAsync(client, dataSourceId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<TestDataSourceConnectionDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(result);
+        Assert.False(result!.IsReachable);
+        Assert.Null(result.StatusCode);
+        Assert.Equal("HttpRequestError", result.ErrorType);
+        Assert.Equal("Unable to connect to target.", result.ErrorMessage);
+        Assert.DoesNotContain("connection refused", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DataSource_TestConnection_InvalidDataSource_ReturnsNotFound_AndDoesNotSendHttp()
+    {
+        using var remoteHttpStub = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remoteHttpStub);
+        using var client = factory.CreateApiClient();
+
+        var response = await TestConnectionAsync(client, Guid.NewGuid(), Guid.NewGuid());
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Empty(remoteHttpStub.Requests);
+    }
+
+    [Fact]
+    public async Task DataSource_TestConnection_InvalidOrCrossDataSourceEnvironment_ReturnsNotFound_AndDoesNotSendHttp()
+    {
+        using var remoteHttpStub = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remoteHttpStub);
+        using var client = factory.CreateApiClient();
+
+        var firstDataSourceId = await CreateDataSourceAsync(client);
+        var secondDataSourceId = await CreateDataSourceAsync(client);
+        var otherEnvironmentId = await CreateEnvironmentAsync(client, secondDataSourceId, baseUrl: "https://other.test");
+
+        var response = await TestConnectionAsync(client, firstDataSourceId, otherEnvironmentId);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Empty(remoteHttpStub.Requests);
+    }
+
+    [Fact]
+    public async Task DataSource_TestConnection_InactiveDataSourceOrEnvironment_ReturnsConflict_AndDoesNotSendHttp()
+    {
+        using var remoteHttpStub = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remoteHttpStub);
+        using var client = factory.CreateApiClient();
+
+        var inactiveDataSourceId = await CreateDataSourceAsync(client);
+        var inactiveDataSourceEnvironmentId = await CreateEnvironmentAsync(client, inactiveDataSourceId, baseUrl: "https://inactive-ds.test");
+
+        await client.PutAsJsonAsync($"/api/data-sources/{inactiveDataSourceId}", new { key = "inactive-ds", isActive = false });
+
+        var inactiveDataSourceResponse = await TestConnectionAsync(client, inactiveDataSourceId, inactiveDataSourceEnvironmentId);
+        Assert.Equal(HttpStatusCode.Conflict, inactiveDataSourceResponse.StatusCode);
+
+        var activeDataSourceId = await CreateDataSourceAsync(client);
+        var inactiveEnvironmentId = await CreateEnvironmentAsync(client, activeDataSourceId, baseUrl: "https://inactive-env.test", isActive: false);
+
+        var inactiveEnvironmentResponse = await TestConnectionAsync(client, activeDataSourceId, inactiveEnvironmentId);
+        Assert.Equal(HttpStatusCode.Conflict, inactiveEnvironmentResponse.StatusCode);
+        Assert.Empty(remoteHttpStub.Requests);
+    }
+
+    [Fact]
     public async Task DataSourceAuthentication_Put_Get_Replace_And_Delete_Work()
     {
         using var factory = new SimpleApiTesterApiFactory(
@@ -1343,6 +1483,9 @@ public sealed class SimpleApiTesterApiIntegrationTests
     private static Task<HttpResponseMessage> ExecuteOperationAsync(HttpClient client, Guid operationId, Guid environmentId)
         => client.PostAsync($"/api/operations/{operationId}/execute?environmentId={environmentId}", null);
 
+    private static Task<HttpResponseMessage> TestConnectionAsync(HttpClient client, Guid dataSourceId, Guid environmentId)
+        => client.PostAsync($"/api/data-sources/{dataSourceId}/test-connection?environmentId={environmentId}", null);
+
     private static async Task<JsonDocument> ReadProblemDocumentAsync(HttpResponseMessage response)
     {
         var stream = await response.Content.ReadAsStreamAsync();
@@ -1461,6 +1604,15 @@ public sealed class SimpleApiTesterApiIntegrationTests
         string? ContentType,
         long DurationMilliseconds,
         bool HasExecutionError,
+        string? ErrorType,
+        string? ErrorMessage);
+
+    private sealed record TestDataSourceConnectionDto(
+        bool IsReachable,
+        int? StatusCode,
+        bool? IsSuccessStatusCode,
+        long DurationMilliseconds,
+        string? ContentType,
         string? ErrorType,
         string? ErrorMessage);
 

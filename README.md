@@ -193,6 +193,26 @@ Example:
 
 This lets login-style operations skip structured auth while normal operations inherit it.
 
+## Test Connection
+The API also supports a lightweight connectivity check for a selected data source environment.
+
+- select a `DataSource`
+- select one of its `DataSourceEnvironment` records
+- send a plain `GET` to that environment's `BaseUrl`
+- no structured authentication is sent
+- no raw custom headers are sent
+- no operation endpoint, query parameters, body, or content type are used
+
+Any received remote HTTP response still means the target is reachable, including:
+- `401`
+- `403`
+- `404`
+- `500`
+
+Transport failure or timeout means the target is unreachable.
+
+This feature does not execute an operation and does not validate the target API's business correctness.
+
 ## Database Setup
 Update `SimpleApiTester.API/appsettings.json` with a SQL Server connection string for `ConnectionStrings:DefaultConnection`.
 
@@ -238,14 +258,15 @@ dotnet test "SimpleApiTester.slnx" -v minimal
 2. Create a `Development` environment under that data source.
 3. Create a `Production` environment under that data source.
 4. Optionally configure structured data-source authentication.
-5. Create an `Operation` once under the data source.
-6. Set `AuthenticationMode` to `Inherit` or `None` as needed.
-7. Add optional query parameters.
-8. Add environment-specific variables under each environment.
-9. Add optional data-source headers.
-10. Add optional operation headers.
-11. Execute the same operation with `Development` using its `environmentId`.
-12. Execute the same operation with `Production` using its `environmentId`.
+5. Optionally use `POST /api/data-sources/{dataSourceId}/test-connection?environmentId={environmentId}` to verify base-URL reachability.
+6. Create an `Operation` once under the data source.
+7. Set `AuthenticationMode` to `Inherit` or `None` as needed.
+8. Add optional query parameters.
+9. Add environment-specific variables under each environment.
+10. Add optional data-source headers.
+11. Add optional operation headers.
+12. Execute the same operation with `Development` using its `environmentId`.
+13. Execute the same operation with `Production` using its `environmentId`.
 
 ## Main API Endpoints
 - `POST /api/data-sources`
@@ -253,6 +274,7 @@ dotnet test "SimpleApiTester.slnx" -v minimal
 - `GET /api/data-sources/{id}`
 - `PUT /api/data-sources/{id}`
 - `DELETE /api/data-sources/{id}`
+- `POST /api/data-sources/{dataSourceId}/test-connection?environmentId={environmentId}`
 - `GET /api/data-sources/{dataSourceId}/authentication`
 - `PUT /api/data-sources/{dataSourceId}/authentication`
 - `DELETE /api/data-sources/{dataSourceId}/authentication`
