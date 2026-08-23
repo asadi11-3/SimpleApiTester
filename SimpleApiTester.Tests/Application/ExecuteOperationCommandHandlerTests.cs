@@ -832,7 +832,8 @@ public sealed class ExecuteOperationCommandHandlerTests
             AuthenticationType = AuthenticationType.ApiKey,
             ValueSourceType = HeaderValueSourceType.Variable,
             SourceKey = "MissingApiKey",
-            ApiKeyHeaderName = "X-Api-Key"
+            ApiKeyHeaderName = "X-Api-Key",
+            ApiKeyLocation = ApiKeyLocation.Header
         });
 
         await dbContext.SaveChangesAsync();
@@ -868,7 +869,8 @@ public sealed class ExecuteOperationCommandHandlerTests
             AuthenticationType = AuthenticationType.ApiKey,
             ValueSourceType = HeaderValueSourceType.UserSecret,
             SourceKey = "Secrets:ApiKey",
-            ApiKeyHeaderName = "X-Api-Key"
+            ApiKeyHeaderName = "X-Api-Key",
+            ApiKeyLocation = ApiKeyLocation.Header
         });
 
         await dbContext.SaveChangesAsync();
@@ -886,7 +888,321 @@ public sealed class ExecuteOperationCommandHandlerTests
 
         Assert.False(response.HasExecutionError);
         Assert.NotNull(executor.Request);
+        Assert.Equal("https://example.com/posts", executor.Request!.Url);
         Assert.Contains(executor.Request!.Headers, x => x.Key == "X-Api-Key" && x.Value == "api-key-123");
+    }
+
+    [Fact]
+    public async Task Handle_WhenStructuredApiKeyQueryAuthenticationIsConfigured_AppendsResolvedQueryParameterAndKeepsExistingQueryParameters()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.Add(new Variable
+        {
+            Id = Guid.NewGuid(),
+            DataSourceEnvironmentId = environmentId,
+            Key = "ApiKey",
+            Value = "dev-123",
+            IsEnabled = true,
+            IsSecret = true
+        });
+
+        dbContext.QueryParameters.Add(new QueryParameter
+        {
+            Id = Guid.NewGuid(),
+            OperationId = operationId,
+            Key = "page",
+            Value = "2",
+            IsEnabled = true
+        });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.ApiKey,
+            ValueSourceType = HeaderValueSourceType.Variable,
+            SourceKey = "ApiKey",
+            ApiKeyHeaderName = "api_key",
+            ApiKeyLocation = ApiKeyLocation.Query
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+        Assert.Equal("https://example.com/posts?page=2&api_key=dev-123", executor.Request!.Url);
+        Assert.Empty(executor.Request.Headers);
+    }
+
+    [Fact]
+    public async Task Handle_WhenStructuredApiKeyQueryAuthenticationUsesSelectedEnvironmentValue_UsesEnvironmentSpecificApiKey()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var developmentEnvironmentId = Guid.NewGuid();
+        var productionEnvironmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, developmentEnvironmentId, dataSourceId, name: "Development", baseUrl: "https://dev.example.com");
+        SeedEnvironment(dbContext, productionEnvironmentId, dataSourceId, name: "Production", baseUrl: "https://prod.example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.AddRange(
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = developmentEnvironmentId,
+                Key = "ApiKey",
+                Value = "dev-123",
+                IsEnabled = true
+            },
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = productionEnvironmentId,
+                Key = "ApiKey",
+                Value = "prod-456",
+                IsEnabled = true
+            });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.ApiKey,
+            ValueSourceType = HeaderValueSourceType.Variable,
+            SourceKey = "ApiKey",
+            ApiKeyHeaderName = "api_key",
+            ApiKeyLocation = ApiKeyLocation.Query
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var developmentExecutor = new CapturingExecutor();
+        var developmentHandler = CreateHandler(dbContext, developmentExecutor);
+        await developmentHandler.Handle(new ExecuteOperationCommand(operationId, developmentEnvironmentId), CancellationToken.None);
+
+        var productionExecutor = new CapturingExecutor();
+        var productionHandler = CreateHandler(dbContext, productionExecutor);
+        await productionHandler.Handle(new ExecuteOperationCommand(operationId, productionEnvironmentId), CancellationToken.None);
+
+        Assert.Equal("https://dev.example.com/posts?api_key=dev-123", developmentExecutor.Request!.Url);
+        Assert.Equal("https://prod.example.com/posts?api_key=prod-456", productionExecutor.Request!.Url);
+    }
+
+    [Fact]
+    public async Task Handle_WhenStructuredApiKeyQueryAuthenticationCannotResolve_ReturnsAuthenticationResolutionError()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.Add(new Variable
+        {
+            Id = Guid.NewGuid(),
+            DataSourceEnvironmentId = environmentId,
+            Key = "ApiKey",
+            Value = "disabled-key",
+            IsEnabled = false
+        });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.ApiKey,
+            ValueSourceType = HeaderValueSourceType.Variable,
+            SourceKey = "ApiKey",
+            ApiKeyHeaderName = "api_key",
+            ApiKeyLocation = ApiKeyLocation.Query
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.True(response.HasExecutionError);
+        Assert.Equal("AuthenticationResolutionError", response.ErrorType);
+        Assert.Equal("Unable to resolve API key source 'ApiKey'.", response.ErrorMessage);
+        Assert.Null(executor.Request);
+    }
+
+    [Fact]
+    public async Task Handle_WhenStructuredApiKeyQueryAuthenticationConflictsWithRawQueryParameter_ReturnsAuthenticationConfigurationError()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.QueryParameters.Add(new QueryParameter
+        {
+            Id = Guid.NewGuid(),
+            OperationId = operationId,
+            Key = "api_key",
+            Value = "raw-value",
+            IsEnabled = true
+        });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.ApiKey,
+            ValueSourceType = HeaderValueSourceType.UserSecret,
+            SourceKey = "Secrets:ApiKey",
+            ApiKeyHeaderName = "api_key",
+            ApiKeyLocation = ApiKeyLocation.Query
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var resolver = new StubExternalHeaderValueResolver(
+            userSecrets: new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Secrets:ApiKey"] = "secret-value"
+            });
+
+        var executor = new CapturingExecutor();
+        var handler = new ExecuteOperationCommandHandler(dbContext, resolver, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.True(response.HasExecutionError);
+        Assert.Equal("AuthenticationConfigurationError", response.ErrorType);
+        Assert.Equal("Structured API key authentication conflicts with raw query parameter 'api_key'.", response.ErrorMessage);
+        Assert.Null(executor.Request);
+    }
+
+    [Fact]
+    public async Task Handle_WhenStructuredApiKeyQueryAuthenticationUsesSpecialCharacters_EncodesExactlyOnce()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.Add(new Variable
+        {
+            Id = Guid.NewGuid(),
+            DataSourceEnvironmentId = environmentId,
+            Key = "ApiKey",
+            Value = "abc+123&x=y?/ slash and snowman ☃",
+            IsEnabled = true
+        });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.ApiKey,
+            ValueSourceType = HeaderValueSourceType.Variable,
+            SourceKey = "ApiKey",
+            ApiKeyHeaderName = "api key",
+            ApiKeyLocation = ApiKeyLocation.Query
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+        Assert.Equal(
+            "https://example.com/posts?api%20key=abc%2B123%26x%3Dy%3F%2F%20slash%20and%20snowman%20%E2%98%83",
+            executor.Request!.Url);
+    }
+
+    [Fact]
+    public async Task Handle_WhenOperationAuthenticationModeIsNone_SkipsStructuredApiKeyQueryButKeepsRawQueryParameters()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.None);
+
+        dbContext.Variables.Add(new Variable
+        {
+            Id = Guid.NewGuid(),
+            DataSourceEnvironmentId = environmentId,
+            Key = "ApiKey",
+            Value = "ignored-key",
+            IsEnabled = true
+        });
+
+        dbContext.QueryParameters.Add(new QueryParameter
+        {
+            Id = Guid.NewGuid(),
+            OperationId = operationId,
+            Key = "page",
+            Value = "2",
+            IsEnabled = true
+        });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.ApiKey,
+            ValueSourceType = HeaderValueSourceType.Variable,
+            SourceKey = "ApiKey",
+            ApiKeyHeaderName = "api_key",
+            ApiKeyLocation = ApiKeyLocation.Query
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+        Assert.Equal("https://example.com/posts?page=2", executor.Request!.Url);
     }
 
     [Fact]

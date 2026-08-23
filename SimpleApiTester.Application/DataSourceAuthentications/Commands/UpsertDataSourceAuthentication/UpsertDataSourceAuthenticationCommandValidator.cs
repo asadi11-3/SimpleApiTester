@@ -14,6 +14,10 @@ public sealed class UpsertDataSourceAuthenticationCommandValidator
         RuleFor(x => x.AuthenticationType)
             .IsInEnum();
 
+        RuleFor(x => x.ApiKeyLocation)
+            .Must(value => value is null || Enum.IsDefined(value.Value))
+            .WithMessage("ApiKeyLocation must be a valid enum value.");
+
         RuleFor(x => x.ValueSourceType)
             .Must(value => value is null || Enum.IsDefined(value.Value))
             .WithMessage("ValueSourceType must be a valid enum value.")
@@ -63,6 +67,10 @@ public sealed class UpsertDataSourceAuthenticationCommandValidator
                     .Must(string.IsNullOrWhiteSpace)
                     .WithMessage("ApiKeyHeaderName must be null for Bearer authentication.");
 
+                RuleFor(x => x.ApiKeyLocation)
+                    .Null()
+                    .WithMessage("ApiKeyLocation must be null for Bearer authentication.");
+
                 RuleFor(x => x.UsernameSourceType)
                     .Null()
                     .WithMessage("UsernameSourceType must be null for Bearer authentication.");
@@ -92,13 +100,31 @@ public sealed class UpsertDataSourceAuthenticationCommandValidator
                     .NotEmpty()
                     .WithMessage("SourceKey is required for API key authentication.");
 
-                RuleFor(x => x.ApiKeyHeaderName)
-                    .NotEmpty()
-                    .MaximumLength(100)
-                    .Must(x => x is not null && !DataSourceAuthenticationRules.HasCrOrLf(x))
-                    .WithMessage("ApiKeyHeaderName cannot contain CR or LF characters.")
-                    .Must(x => x is not null && !DataSourceAuthenticationRules.IsDisallowedApiKeyHeaderName(x))
-                    .WithMessage("ApiKeyHeaderName must not be Authorization or a reserved framework header.");
+                When(
+                    x => DataSourceAuthenticationRules.NormalizeApiKeyLocation(x.ApiKeyLocation) == ApiKeyLocation.Header,
+                    () =>
+                    {
+                        RuleFor(x => x.ApiKeyHeaderName)
+                            .NotEmpty()
+                            .MaximumLength(100)
+                            .Must(x => x is not null && !DataSourceAuthenticationRules.HasCrOrLf(x))
+                            .WithMessage("ApiKeyHeaderName cannot contain CR or LF characters.")
+                            .Must(x => x is not null && !DataSourceAuthenticationRules.IsDisallowedApiKeyHeaderName(x))
+                            .WithMessage("ApiKeyHeaderName must not be Authorization or a reserved framework header.");
+                    });
+
+                When(
+                    x => DataSourceAuthenticationRules.NormalizeApiKeyLocation(x.ApiKeyLocation) == ApiKeyLocation.Query,
+                    () =>
+                    {
+                        RuleFor(x => x.ApiKeyHeaderName)
+                            .NotEmpty()
+                            .MaximumLength(100)
+                            .Must(x => x is not null && !DataSourceAuthenticationRules.HasCrOrLf(x))
+                            .WithMessage("ApiKeyHeaderName cannot contain CR or LF characters.")
+                            .Must(x => x is not null && !x.Any(DataSourceAuthenticationRules.IsDisallowedApiKeyQueryKeyCharacter))
+                            .WithMessage("ApiKeyHeaderName cannot contain ?, &, or = characters when ApiKeyLocation is Query.");
+                    });
 
                 RuleFor(x => x.UsernameSourceType)
                     .Null()
@@ -148,6 +174,10 @@ public sealed class UpsertDataSourceAuthenticationCommandValidator
                 RuleFor(x => x.ApiKeyHeaderName)
                     .Must(string.IsNullOrWhiteSpace)
                     .WithMessage("ApiKeyHeaderName must be null for Basic authentication.");
+
+                RuleFor(x => x.ApiKeyLocation)
+                    .Null()
+                    .WithMessage("ApiKeyLocation must be null for Basic authentication.");
             });
     }
 }

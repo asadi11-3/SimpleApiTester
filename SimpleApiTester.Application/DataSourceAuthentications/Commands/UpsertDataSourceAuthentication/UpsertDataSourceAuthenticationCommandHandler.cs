@@ -30,15 +30,33 @@ internal sealed class UpsertDataSourceAuthenticationCommandHandler
 
         var normalizedSourceKey = DataSourceAuthenticationRules.NormalizeSourceKey(request.SourceKey);
         var normalizedApiKeyHeaderName = DataSourceAuthenticationRules.NormalizeApiKeyHeaderName(request.ApiKeyHeaderName);
+        var normalizedApiKeyLocation = request.AuthenticationType == AuthenticationType.ApiKey
+            ? DataSourceAuthenticationRules.NormalizeApiKeyLocation(request.ApiKeyLocation)
+            : (ApiKeyLocation?)null;
         var normalizedUsernameSourceKey = DataSourceAuthenticationRules.NormalizeSourceKey(request.UsernameSourceKey);
         var normalizedPasswordSourceKey = DataSourceAuthenticationRules.NormalizeSourceKey(request.PasswordSourceKey);
 
-        await DataSourceAuthenticationConflictGuard.EnsureNoEnabledHeaderConflictAsync(
-            _dbContext,
-            request.DataSourceId,
-            request.AuthenticationType,
-            normalizedApiKeyHeaderName,
-            cancellationToken);
+        if (request.AuthenticationType == AuthenticationType.ApiKey
+            && normalizedApiKeyLocation == ApiKeyLocation.Query)
+        {
+            await DataSourceAuthenticationConflictGuard.EnsureNoEnabledQueryParameterConflictAsync(
+                _dbContext,
+                request.DataSourceId,
+                request.AuthenticationType,
+                normalizedApiKeyLocation,
+                normalizedApiKeyHeaderName,
+                cancellationToken);
+        }
+        else
+        {
+            await DataSourceAuthenticationConflictGuard.EnsureNoEnabledHeaderConflictAsync(
+                _dbContext,
+                request.DataSourceId,
+                request.AuthenticationType,
+                normalizedApiKeyLocation,
+                normalizedApiKeyHeaderName,
+                cancellationToken);
+        }
 
         var authentication = await _dbContext.DataSourceAuthentications
             .FirstOrDefaultAsync(x => x.DataSourceId == request.DataSourceId, cancellationToken);
@@ -61,6 +79,7 @@ internal sealed class UpsertDataSourceAuthenticationCommandHandler
             authentication.ValueSourceType = null;
             authentication.SourceKey = null;
             authentication.ApiKeyHeaderName = null;
+            authentication.ApiKeyLocation = null;
             authentication.UsernameSourceType = request.UsernameSourceType;
             authentication.UsernameSourceKey = normalizedUsernameSourceKey;
             authentication.PasswordSourceType = request.PasswordSourceType;
@@ -71,6 +90,9 @@ internal sealed class UpsertDataSourceAuthenticationCommandHandler
             authentication.ValueSourceType = request.ValueSourceType;
             authentication.SourceKey = normalizedSourceKey;
             authentication.ApiKeyHeaderName = normalizedApiKeyHeaderName;
+            authentication.ApiKeyLocation = request.AuthenticationType == AuthenticationType.ApiKey
+                ? normalizedApiKeyLocation
+                : null;
             authentication.UsernameSourceType = null;
             authentication.UsernameSourceKey = null;
             authentication.PasswordSourceType = null;

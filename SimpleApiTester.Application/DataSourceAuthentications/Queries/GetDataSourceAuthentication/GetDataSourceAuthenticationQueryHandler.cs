@@ -28,6 +28,7 @@ internal sealed class GetDataSourceAuthenticationQueryHandler
                 x.ValueSourceType,
                 x.SourceKey,
                 x.ApiKeyHeaderName,
+                x.ApiKeyLocation,
                 x.UsernameSourceType,
                 x.UsernameSourceKey,
                 x.PasswordSourceType,

@@ -116,6 +116,7 @@ internal sealed class ExecuteOperationCommandHandler
         }
 
         var finalHeaders = rawHeaderResolution.Headers.ToList();
+        var finalQueryParameters = queryParameters.ToList();
 
         if (operation.AuthenticationMode == OperationAuthenticationMode.Inherit)
         {
@@ -127,6 +128,7 @@ internal sealed class ExecuteOperationCommandHandler
                     x.ValueSourceType,
                     x.SourceKey,
                     x.ApiKeyHeaderName,
+                    x.ApiKeyLocation,
                     x.UsernameSourceType,
                     x.UsernameSourceKey,
                     x.PasswordSourceType,
@@ -135,35 +137,63 @@ internal sealed class ExecuteOperationCommandHandler
 
             if (authentication is not null)
             {
-                var effectiveHeaderName = DataSourceAuthenticationRules.GetEffectiveHeaderName(
-                    authentication.AuthenticationType,
-                    authentication.ApiKeyHeaderName);
-
-                if (rawHeaderResolution.MergedHeaderKeys.Any(
-                    x => string.Equals(x, effectiveHeaderName, StringComparison.OrdinalIgnoreCase)))
+                if (authentication.AuthenticationType == AuthenticationType.ApiKey
+                    && DataSourceAuthenticationRules.NormalizeApiKeyLocation(authentication.ApiKeyLocation) == ApiKeyLocation.Query)
                 {
-                    return CreateAuthenticationConfigurationErrorResponse(
+                    if (finalQueryParameters.Any(x => DataSourceAuthenticationRules.ConflictsWithQueryParameter(
                         authentication.AuthenticationType,
-                        authentication.ApiKeyHeaderName);
+                        authentication.ApiKeyLocation,
+                        authentication.ApiKeyHeaderName,
+                        x.Key)))
+                    {
+                        return CreateAuthenticationConfigurationErrorResponse(
+                            DataSourceAuthenticationRules.CreateQueryConflictMessage(authentication.ApiKeyHeaderName!));
+                    }
                 }
 
-                var resolvedAuthenticationHeaderValue = await ResolveAuthenticationHeaderValueAsync(
+                var effectiveHeaderName = DataSourceAuthenticationRules.GetEffectiveHeaderName(
+                    authentication.AuthenticationType,
+                    authentication.ApiKeyLocation,
+                    authentication.ApiKeyHeaderName);
+
+                if (effectiveHeaderName is not null
+                    && rawHeaderResolution.MergedHeaderKeys.Any(
+                        x => string.Equals(x, effectiveHeaderName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return CreateAuthenticationConfigurationErrorResponse(
+                        DataSourceAuthenticationRules.CreateConflictMessage(
+                            authentication.AuthenticationType,
+                            authentication.ApiKeyLocation,
+                            authentication.ApiKeyHeaderName));
+                }
+
+                var resolvedAuthenticationValue = await ResolveAuthenticationValueAsync(
                     authentication,
                     rawHeaderResolution.EnabledVariables,
                     cancellationToken);
 
-                if (resolvedAuthenticationHeaderValue.ErrorMessage is not null)
+                if (resolvedAuthenticationValue.ErrorMessage is not null)
                 {
-                    return CreateAuthenticationResolutionErrorResponse(resolvedAuthenticationHeaderValue.ErrorMessage);
+                    return CreateAuthenticationResolutionErrorResponse(resolvedAuthenticationValue.ErrorMessage);
                 }
 
-                finalHeaders.Add(new ResolvedRequestHeader(
-                    effectiveHeaderName,
-                    resolvedAuthenticationHeaderValue.HeaderValue!));
+                if (authentication.AuthenticationType == AuthenticationType.ApiKey
+                    && DataSourceAuthenticationRules.NormalizeApiKeyLocation(authentication.ApiKeyLocation) == ApiKeyLocation.Query)
+                {
+                    finalQueryParameters.Add(new QueryParameterValue(
+                        authentication.ApiKeyHeaderName!,
+                        resolvedAuthenticationValue.ResolvedValue!));
+                }
+                else
+                {
+                    finalHeaders.Add(new ResolvedRequestHeader(
+                        effectiveHeaderName!,
+                        resolvedAuthenticationValue.ResolvedValue!));
+                }
             }
         }
 
-        if (!TryBuildRequestUrl(environment.BaseUrl, operation.Endpoint, queryParameters, out var requestUrl))
+        if (!TryBuildRequestUrl(environment.BaseUrl, operation.Endpoint, finalQueryParameters, out var requestUrl))
         {
             return new ExecuteOperationResponse(
                 StatusCode: null,
@@ -259,7 +289,7 @@ internal sealed class ExecuteOperationCommandHandler
             null);
     }
 
-    private async Task<AuthenticationHeaderResolutionResult> ResolveAuthenticationHeaderValueAsync(
+    private async Task<AuthenticationValueResolutionResult> ResolveAuthenticationValueAsync(
         DataSourceAuthenticationValue authentication,
         IReadOnlyCollection<VariableValue> enabledVariables,
         CancellationToken cancellationToken)
@@ -275,7 +305,7 @@ internal sealed class ExecuteOperationCommandHandler
             if (string.IsNullOrWhiteSpace(resolvedUsername)
                 || resolvedUsername.Contains(':'))
             {
-                return new AuthenticationHeaderResolutionResult(
+                return new AuthenticationValueResolutionResult(
                     null,
                     DataSourceAuthenticationRules.CreateBasicUsernameResolutionErrorMessage(
                         authentication.UsernameSourceKey!));
@@ -289,7 +319,7 @@ internal sealed class ExecuteOperationCommandHandler
 
             if (resolvedPassword is null)
             {
-                return new AuthenticationHeaderResolutionResult(
+                return new AuthenticationValueResolutionResult(
                     null,
                     DataSourceAuthenticationRules.CreateBasicPasswordResolutionErrorMessage(
                         authentication.PasswordSourceKey!));
@@ -298,7 +328,7 @@ internal sealed class ExecuteOperationCommandHandler
             var encodedCredentials = Convert.ToBase64String(
                 Encoding.UTF8.GetBytes($"{resolvedUsername}:{resolvedPassword}"));
 
-            return new AuthenticationHeaderResolutionResult($"Basic {encodedCredentials}", null);
+            return new AuthenticationValueResolutionResult($"Basic {encodedCredentials}", null);
         }
 
         var resolvedAuthenticationValue = await ResolveAuthenticationSourceValueAsync(
@@ -309,14 +339,14 @@ internal sealed class ExecuteOperationCommandHandler
 
         if (string.IsNullOrWhiteSpace(resolvedAuthenticationValue))
         {
-            return new AuthenticationHeaderResolutionResult(
+            return new AuthenticationValueResolutionResult(
                 null,
                 DataSourceAuthenticationRules.CreateResolutionErrorMessage(
                     authentication.AuthenticationType,
                     authentication.SourceKey!));
         }
 
-        return new AuthenticationHeaderResolutionResult(
+        return new AuthenticationValueResolutionResult(
             authentication.AuthenticationType == AuthenticationType.Bearer
                 ? $"Bearer {resolvedAuthenticationValue}"
                 : resolvedAuthenticationValue,
@@ -407,8 +437,7 @@ internal sealed class ExecuteOperationCommandHandler
             ErrorMessage: errorMessage);
 
     private static ExecuteOperationResponse CreateAuthenticationConfigurationErrorResponse(
-        AuthenticationType authenticationType,
-        string? apiKeyHeaderName)
+        string errorMessage)
         => new(
             StatusCode: null,
             IsSuccessStatusCode: null,
@@ -417,7 +446,7 @@ internal sealed class ExecuteOperationCommandHandler
             DurationMilliseconds: 0,
             HasExecutionError: true,
             ErrorType: "AuthenticationConfigurationError",
-            ErrorMessage: DataSourceAuthenticationRules.CreateConflictMessage(authenticationType, apiKeyHeaderName));
+            ErrorMessage: errorMessage);
 
     private static bool TryBuildRequestUrl(
         string baseUrl,
@@ -499,12 +528,13 @@ internal sealed class ExecuteOperationCommandHandler
         HeaderValueSourceType? ValueSourceType,
         string? SourceKey,
         string? ApiKeyHeaderName,
+        ApiKeyLocation? ApiKeyLocation,
         HeaderValueSourceType? UsernameSourceType,
         string? UsernameSourceKey,
         HeaderValueSourceType? PasswordSourceType,
         string? PasswordSourceKey);
 
-    private sealed record AuthenticationHeaderResolutionResult(
-        string? HeaderValue,
+    private sealed record AuthenticationValueResolutionResult(
+        string? ResolvedValue,
         string? ErrorMessage);
 }

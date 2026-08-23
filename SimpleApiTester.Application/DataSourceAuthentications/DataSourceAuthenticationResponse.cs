@@ -9,6 +9,7 @@ public sealed record DataSourceAuthenticationResponse(
     HeaderValueSourceType? ValueSourceType,
     string? SourceKey,
     string? ApiKeyHeaderName,
+    ApiKeyLocation? ApiKeyLocation,
     HeaderValueSourceType? UsernameSourceType,
     string? UsernameSourceKey,
     HeaderValueSourceType? PasswordSourceType,

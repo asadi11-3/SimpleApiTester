@@ -104,9 +104,9 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - supported types:
   - `Bearer`
   - `Basic`
-  - `ApiKey` in header only
+  - `ApiKey` in header
+  - `ApiKey` in query string
 - not supported:
-  - query-string API keys
   - OAuth or token refresh
 - auth values can resolve from:
   - selected-environment `Variable`
@@ -116,11 +116,16 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - `DataSourceAuthentication` stores only metadata:
   - `Bearer` uses `AuthenticationType`, `ValueSourceType`, `SourceKey`
   - `Basic` uses `AuthenticationType`, `UsernameSourceType`, `UsernameSourceKey`, `PasswordSourceType`, `PasswordSourceKey`
-  - `ApiKey` uses `AuthenticationType`, `ValueSourceType`, `SourceKey`, `ApiKeyHeaderName`
+  - `ApiKey` uses `AuthenticationType`, `ValueSourceType`, `SourceKey`, `ApiKeyLocation`, `ApiKeyHeaderName`
 - `Basic` credentials are generated only during execution as `Authorization: Basic <base64(username:password)>`
+- `ApiKeyHeaderName` remains the single API-key name field for backward compatibility:
+  - in header mode it is the HTTP header name
+  - in query mode it is the query-parameter key
 - generated `Authorization` headers are not stored
+- generated API-key query parameters are not stored
 - password variables should typically use `IsSecret = true`
 - no structured auth row means no structured authentication is applied
+- header API keys are generally preferable when the target API supports them because query-string credentials may appear in reverse proxy logs, server logs, monitoring URLs, browser tooling, and downstream traces
 
 ### Reserved Headers
 The following custom headers cannot be configured through the header endpoints:
@@ -137,6 +142,12 @@ When structured authentication exists, enabled raw headers cannot conflict with 
 - structured `ApiKey` conflicts with enabled raw header matching `ApiKeyHeaderName`
 - conflicts are case-insensitive and execution fails rather than silently overriding
 
+When structured `ApiKey` uses query mode, enabled raw query parameters cannot conflict with its exact query key:
+- conflict comparison is case-sensitive
+- `api_key` conflicts with `api_key`
+- `api_key` does not conflict with `API_KEY`
+- generated structured auth query parameters exist only in memory during execution
+
 ## Execution Behavior
 When an operation is executed, the application:
 - loads the `Operation`
@@ -152,8 +163,8 @@ When an operation is executed, the application:
 - resolves variable-backed headers from the selected environment only
 - uses the real stored variable value even when the variable is marked secret
 - if `Operation.AuthenticationMode == Inherit`, optionally resolves structured data-source authentication
-- rejects structured-auth/raw-header conflicts before sending HTTP
-- adds either `Authorization: Bearer <value>`, `Authorization: Basic <base64(username:password)>`, or `<ApiKeyHeaderName>: <value>` when structured authentication resolves successfully
+- rejects structured-auth/raw-header and structured-auth/raw-query conflicts before sending HTTP
+- adds either `Authorization: Bearer <value>`, `Authorization: Basic <base64(username:password)>`, `<ApiKeyHeaderName>: <value>`, or `?ApiKeyHeaderName=<value>` when structured authentication resolves successfully
 - sends the request through `IHttpClientFactory`
 - returns remote HTTP responses, including non-2xx results, as normal execution results
 - returns transport failures and header resolution failures as execution errors
@@ -205,6 +216,16 @@ Basic example:
 - mark `ApiPassword` as `IsSecret = true`
 
 The generated Basic `Authorization` header is created at execution time only. The application does not store the generated header or the Base64 credential.
+
+ApiKey query example:
+- `Catalog API` data source authentication: `ApiKey`
+- location: `Query`
+- query key: `api_key`
+- source: `Variable -> CatalogApiKey`
+- `Development` environment variable: `CatalogApiKey = fake-dev-key-123`
+- `Production` environment variable: `CatalogApiKey = fake-prod-key-456`
+
+Executing the same operation with different environments adds the API key to the final request URL at execution time only, for example `?api_key=fake-dev-key-123`. The generated query contribution is not stored as a `QueryParameter` record.
 
 ## Test Connection
 The API also supports a lightweight connectivity check for a selected data source environment.

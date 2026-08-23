@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using SimpleApiTester.Application.Abstractions.Persistence;
+using SimpleApiTester.Application.DataSourceAuthentications;
 using SimpleApiTester.Domain.Entities;
 
 namespace SimpleApiTester.Application.QueryParameters.Commands.CreateQueryParameter;
@@ -27,11 +28,20 @@ internal sealed class CreateQueryParameterCommandHandler
             throw new KeyNotFoundException("Operation not found.");
         }
 
+        var normalizedKey = request.Key.Trim();
+
+        await DataSourceAuthenticationConflictGuard.EnsureQueryParameterDoesNotConflictAsync(
+            _dbContext,
+            request.OperationId,
+            normalizedKey,
+            request.IsEnabled,
+            cancellationToken);
+
         var queryParameter = new QueryParameter
         {
             Id = Guid.NewGuid(),
             OperationId = request.OperationId,
-            Key = request.Key.Trim(),
+            Key = normalizedKey,
             Value = request.Value,
             IsEnabled = request.IsEnabled
         };

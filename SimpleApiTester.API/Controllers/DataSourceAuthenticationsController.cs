@@ -42,6 +42,7 @@ public sealed class DataSourceAuthenticationsController : ControllerBase
                 request.ValueSourceType,
                 request.SourceKey,
                 request.ApiKeyHeaderName,
+                request.ApiKeyLocation,
                 request.UsernameSourceType,
                 request.UsernameSourceKey,
                 request.PasswordSourceType,

@@ -16,6 +16,8 @@ public class DataSourceAuthentication
 
     public string? ApiKeyHeaderName { get; set; }
 
+    public ApiKeyLocation? ApiKeyLocation { get; set; }
+
     public HeaderValueSourceType? UsernameSourceType { get; set; }
 
     public string? UsernameSourceKey { get; set; }

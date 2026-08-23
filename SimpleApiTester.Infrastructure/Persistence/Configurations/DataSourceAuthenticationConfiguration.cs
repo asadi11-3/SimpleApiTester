@@ -29,6 +29,10 @@ public sealed class DataSourceAuthenticationConfiguration
         builder.Property(x => x.ApiKeyHeaderName)
             .HasMaxLength(100);
 
+        builder.Property(x => x.ApiKeyLocation)
+            .HasConversion<string>()
+            .HasMaxLength(20);
+
         builder.Property(x => x.UsernameSourceType)
             .HasConversion<string>()
             .HasMaxLength(30);
@@ -45,13 +49,17 @@ public sealed class DataSourceAuthenticationConfiguration
 
         builder.ToTable(x => x.HasCheckConstraint(
             "CK_DataSourceAuthentications_AuthShape",
-            "([AuthenticationType] = 'Bearer' AND [ValueSourceType] IS NOT NULL AND [SourceKey] IS NOT NULL AND [ApiKeyHeaderName] IS NULL AND [UsernameSourceType] IS NULL AND [UsernameSourceKey] IS NULL AND [PasswordSourceType] IS NULL AND [PasswordSourceKey] IS NULL) " +
-            "OR ([AuthenticationType] = 'ApiKey' AND [ValueSourceType] IS NOT NULL AND [SourceKey] IS NOT NULL AND [ApiKeyHeaderName] IS NOT NULL AND [UsernameSourceType] IS NULL AND [UsernameSourceKey] IS NULL AND [PasswordSourceType] IS NULL AND [PasswordSourceKey] IS NULL) " +
-            "OR ([AuthenticationType] = 'Basic' AND [ValueSourceType] IS NULL AND [SourceKey] IS NULL AND [ApiKeyHeaderName] IS NULL AND [UsernameSourceType] IS NOT NULL AND [UsernameSourceKey] IS NOT NULL AND [PasswordSourceType] IS NOT NULL AND [PasswordSourceKey] IS NOT NULL)"));
+            "([AuthenticationType] = 'Bearer' AND [ValueSourceType] IS NOT NULL AND [SourceKey] IS NOT NULL AND [ApiKeyHeaderName] IS NULL AND [ApiKeyLocation] IS NULL AND [UsernameSourceType] IS NULL AND [UsernameSourceKey] IS NULL AND [PasswordSourceType] IS NULL AND [PasswordSourceKey] IS NULL) " +
+            "OR ([AuthenticationType] = 'ApiKey' AND [ValueSourceType] IS NOT NULL AND [SourceKey] IS NOT NULL AND [ApiKeyHeaderName] IS NOT NULL AND [ApiKeyLocation] IS NOT NULL AND [UsernameSourceType] IS NULL AND [UsernameSourceKey] IS NULL AND [PasswordSourceType] IS NULL AND [PasswordSourceKey] IS NULL) " +
+            "OR ([AuthenticationType] = 'Basic' AND [ValueSourceType] IS NULL AND [SourceKey] IS NULL AND [ApiKeyHeaderName] IS NULL AND [ApiKeyLocation] IS NULL AND [UsernameSourceType] IS NOT NULL AND [UsernameSourceKey] IS NOT NULL AND [PasswordSourceType] IS NOT NULL AND [PasswordSourceKey] IS NOT NULL)"));
 
         builder.ToTable(x => x.HasCheckConstraint(
             "CK_DataSourceAuthentications_SourceTypes",
             "([ValueSourceType] IS NULL OR [ValueSourceType] IN ('Variable', 'UserSecret', 'EnvironmentVariable'))" +
             " AND ([UsernameSourceType] IS NULL OR [UsernameSourceType] IN ('Variable', 'UserSecret', 'EnvironmentVariable')) AND ([PasswordSourceType] IS NULL OR [PasswordSourceType] IN ('Variable', 'UserSecret', 'EnvironmentVariable'))"));
+
+        builder.ToTable(x => x.HasCheckConstraint(
+            "CK_DataSourceAuthentications_ApiKeyLocation",
+            "([ApiKeyLocation] IS NULL OR [ApiKeyLocation] IN ('Header', 'Query'))"));
     }
 }
