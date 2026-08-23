@@ -73,7 +73,7 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - `IsSecret`
 - case-insensitive unique key per `DataSourceEnvironment`
 - disabled variables remain stored and listable
-- used only for header value resolution
+- used for header and structured-authentication value resolution
 - secret variables are masked as `********` in read responses
 - secret masking is presentation-only and does not encrypt values at rest
 - `Value = null` on update preserves the existing stored value
@@ -103,9 +103,9 @@ SimpleApiTester is intentionally not a full Postman replacement.
 - optional per `DataSource`
 - supported types:
   - `Bearer`
+  - `Basic`
   - `ApiKey` in header only
 - not supported:
-  - `Basic`
   - query-string API keys
   - OAuth or token refresh
 - auth values can resolve from:
@@ -114,10 +114,12 @@ SimpleApiTester is intentionally not a full Postman replacement.
   - `EnvironmentVariable`
 - `General` literal values are not supported for structured authentication
 - `DataSourceAuthentication` stores only metadata:
-  - `AuthenticationType`
-  - `ValueSourceType`
-  - `SourceKey`
-  - `ApiKeyHeaderName`
+  - `Bearer` uses `AuthenticationType`, `ValueSourceType`, `SourceKey`
+  - `Basic` uses `AuthenticationType`, `UsernameSourceType`, `UsernameSourceKey`, `PasswordSourceType`, `PasswordSourceKey`
+  - `ApiKey` uses `AuthenticationType`, `ValueSourceType`, `SourceKey`, `ApiKeyHeaderName`
+- `Basic` credentials are generated only during execution as `Authorization: Basic <base64(username:password)>`
+- generated `Authorization` headers are not stored
+- password variables should typically use `IsSecret = true`
 - no structured auth row means no structured authentication is applied
 
 ### Reserved Headers
@@ -127,10 +129,11 @@ The following custom headers cannot be configured through the header endpoints:
 - `Host`
 - `Transfer-Encoding`
 
-`Authorization` is allowed as a normal custom header only when structured Bearer authentication is not configured for the same data source.
+`Authorization` is allowed as a normal custom header only when structured Bearer or Basic authentication is not configured for the same data source.
 
 When structured authentication exists, enabled raw headers cannot conflict with its effective header name:
 - structured `Bearer` conflicts with enabled raw `Authorization`
+- structured `Basic` conflicts with enabled raw `Authorization`
 - structured `ApiKey` conflicts with enabled raw header matching `ApiKeyHeaderName`
 - conflicts are case-insensitive and execution fails rather than silently overriding
 
@@ -150,7 +153,7 @@ When an operation is executed, the application:
 - uses the real stored variable value even when the variable is marked secret
 - if `Operation.AuthenticationMode == Inherit`, optionally resolves structured data-source authentication
 - rejects structured-auth/raw-header conflicts before sending HTTP
-- adds either `Authorization: Bearer <value>` or `<ApiKeyHeaderName>: <value>` when structured authentication resolves successfully
+- adds either `Authorization: Bearer <value>`, `Authorization: Basic <base64(username:password)>`, or `<ApiKeyHeaderName>: <value>` when structured authentication resolves successfully
 - sends the request through `IHttpClientFactory`
 - returns remote HTTP responses, including non-2xx results, as normal execution results
 - returns transport failures and header resolution failures as execution errors
@@ -193,6 +196,15 @@ Example:
 - `GetEmployees` operation: `AuthenticationMode = Inherit`
 
 This lets login-style operations skip structured auth while normal operations inherit it.
+
+Basic example:
+- `HR System` data source authentication: `Basic`
+- username source: `Variable -> ApiUsername`
+- password source: `Variable -> ApiPassword`
+- `Development` environment variables: `ApiUsername = dev-user`, `ApiPassword = dev-password`
+- mark `ApiPassword` as `IsSecret = true`
+
+The generated Basic `Authorization` header is created at execution time only. The application does not store the generated header or the Base64 credential.
 
 ## Test Connection
 The API also supports a lightweight connectivity check for a selected data source environment.

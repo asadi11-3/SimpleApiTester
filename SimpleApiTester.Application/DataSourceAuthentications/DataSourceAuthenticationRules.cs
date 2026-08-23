@@ -13,8 +13,16 @@ internal static class DataSourceAuthenticationRules
             or HeaderValueSourceType.UserSecret
             or HeaderValueSourceType.EnvironmentVariable;
 
-    public static string NormalizeSourceKey(string sourceKey)
-        => sourceKey.Trim();
+    public static string? NormalizeSourceKey(string? sourceKey)
+    {
+        if (sourceKey is null)
+        {
+            return null;
+        }
+
+        var trimmed = sourceKey.Trim();
+        return trimmed.Length == 0 ? null : trimmed;
+    }
 
     public static string? NormalizeApiKeyHeaderName(string? apiKeyHeaderName)
     {
@@ -32,7 +40,7 @@ internal static class DataSourceAuthenticationRules
             || string.Equals(headerName.Trim(), "Authorization", StringComparison.OrdinalIgnoreCase);
 
     public static string GetEffectiveHeaderName(AuthenticationType authenticationType, string? apiKeyHeaderName)
-        => authenticationType == AuthenticationType.Bearer
+        => authenticationType is AuthenticationType.Bearer or AuthenticationType.Basic
             ? "Authorization"
             : apiKeyHeaderName!;
 
@@ -53,10 +61,25 @@ internal static class DataSourceAuthenticationRules
     public static string CreateResolutionErrorMessage(
         AuthenticationType authenticationType,
         string sourceKey)
-        => authenticationType == AuthenticationType.Bearer
-            ? $"Unable to resolve Bearer authentication source '{sourceKey}'."
-            : $"Unable to resolve API key source '{sourceKey}'.";
+        => authenticationType switch
+        {
+            AuthenticationType.Bearer => $"Unable to resolve Bearer authentication source '{sourceKey}'.",
+            AuthenticationType.ApiKey => $"Unable to resolve API key source '{sourceKey}'.",
+            _ => $"Unable to resolve {GetAuthenticationDisplayName(authenticationType)} authentication source '{sourceKey}'."
+        };
+
+    public static string CreateBasicUsernameResolutionErrorMessage(string sourceKey)
+        => $"Unable to use Basic authentication username source '{sourceKey}'.";
+
+    public static string CreateBasicPasswordResolutionErrorMessage(string sourceKey)
+        => $"Unable to resolve Basic authentication password source '{sourceKey}'.";
 
     public static string GetAuthenticationDisplayName(AuthenticationType authenticationType)
-        => authenticationType == AuthenticationType.Bearer ? "Bearer" : "API key";
+        => authenticationType switch
+        {
+            AuthenticationType.Bearer => "Bearer",
+            AuthenticationType.ApiKey => "API key",
+            AuthenticationType.Basic => "Basic",
+            _ => "structured"
+        };
 }

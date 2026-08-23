@@ -2,6 +2,7 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using SimpleApiTester.Application.Abstractions.Persistence;
 using SimpleApiTester.Domain.Entities;
+using SimpleApiTester.Domain.Enum;
 
 namespace SimpleApiTester.Application.DataSourceAuthentications.Commands.UpsertDataSourceAuthentication;
 
@@ -29,6 +30,8 @@ internal sealed class UpsertDataSourceAuthenticationCommandHandler
 
         var normalizedSourceKey = DataSourceAuthenticationRules.NormalizeSourceKey(request.SourceKey);
         var normalizedApiKeyHeaderName = DataSourceAuthenticationRules.NormalizeApiKeyHeaderName(request.ApiKeyHeaderName);
+        var normalizedUsernameSourceKey = DataSourceAuthenticationRules.NormalizeSourceKey(request.UsernameSourceKey);
+        var normalizedPasswordSourceKey = DataSourceAuthenticationRules.NormalizeSourceKey(request.PasswordSourceKey);
 
         await DataSourceAuthenticationConflictGuard.EnsureNoEnabledHeaderConflictAsync(
             _dbContext,
@@ -52,9 +55,27 @@ internal sealed class UpsertDataSourceAuthenticationCommandHandler
         }
 
         authentication.AuthenticationType = request.AuthenticationType;
-        authentication.ValueSourceType = request.ValueSourceType;
-        authentication.SourceKey = normalizedSourceKey;
-        authentication.ApiKeyHeaderName = normalizedApiKeyHeaderName;
+
+        if (request.AuthenticationType == AuthenticationType.Basic)
+        {
+            authentication.ValueSourceType = null;
+            authentication.SourceKey = null;
+            authentication.ApiKeyHeaderName = null;
+            authentication.UsernameSourceType = request.UsernameSourceType;
+            authentication.UsernameSourceKey = normalizedUsernameSourceKey;
+            authentication.PasswordSourceType = request.PasswordSourceType;
+            authentication.PasswordSourceKey = normalizedPasswordSourceKey;
+        }
+        else
+        {
+            authentication.ValueSourceType = request.ValueSourceType;
+            authentication.SourceKey = normalizedSourceKey;
+            authentication.ApiKeyHeaderName = normalizedApiKeyHeaderName;
+            authentication.UsernameSourceType = null;
+            authentication.UsernameSourceKey = null;
+            authentication.PasswordSourceType = null;
+            authentication.PasswordSourceKey = null;
+        }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
     }

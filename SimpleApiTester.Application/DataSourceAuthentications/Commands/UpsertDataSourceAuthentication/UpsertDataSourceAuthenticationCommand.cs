@@ -6,6 +6,10 @@ namespace SimpleApiTester.Application.DataSourceAuthentications.Commands.UpsertD
 public sealed record UpsertDataSourceAuthenticationCommand(
     Guid DataSourceId,
     AuthenticationType AuthenticationType,
-    HeaderValueSourceType ValueSourceType,
-    string SourceKey,
-    string? ApiKeyHeaderName) : IRequest;
+    HeaderValueSourceType? ValueSourceType,
+    string? SourceKey,
+    string? ApiKeyHeaderName,
+    HeaderValueSourceType? UsernameSourceType,
+    string? UsernameSourceKey,
+    HeaderValueSourceType? PasswordSourceType,
+    string? PasswordSourceKey) : IRequest;

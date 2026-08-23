@@ -41,7 +41,11 @@ public sealed class DataSourceAuthenticationsController : ControllerBase
                 request.AuthenticationType,
                 request.ValueSourceType,
                 request.SourceKey,
-                request.ApiKeyHeaderName),
+                request.ApiKeyHeaderName,
+                request.UsernameSourceType,
+                request.UsernameSourceKey,
+                request.PasswordSourceType,
+                request.PasswordSourceKey),
             cancellationToken);
 
         return NoContent();

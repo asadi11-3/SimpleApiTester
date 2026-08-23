@@ -6,6 +6,10 @@ public sealed record DataSourceAuthenticationResponse(
     Guid Id,
     Guid DataSourceId,
     AuthenticationType AuthenticationType,
-    HeaderValueSourceType ValueSourceType,
-    string SourceKey,
-    string? ApiKeyHeaderName);
+    HeaderValueSourceType? ValueSourceType,
+    string? SourceKey,
+    string? ApiKeyHeaderName,
+    HeaderValueSourceType? UsernameSourceType,
+    string? UsernameSourceKey,
+    HeaderValueSourceType? PasswordSourceType,
+    string? PasswordSourceKey);

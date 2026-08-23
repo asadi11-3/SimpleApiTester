@@ -574,6 +574,271 @@ public sealed class SimpleApiTesterApiIntegrationTests
     }
 
     [Fact]
+    public async Task DataSourceAuthentication_Put_Get_Basic_Works_AndReturnsMetadataOnly()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var putResponse = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        Assert.Equal(HttpStatusCode.NoContent, putResponse.StatusCode);
+
+        var getResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/authentication");
+        var document = await ReadProblemOrJsonDocumentAsync(getResponse);
+        var auth = document.RootElement;
+
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        Assert.Equal(3, auth.GetProperty("authenticationType").GetInt32());
+        Assert.True(auth.GetProperty("valueSourceType").ValueKind == JsonValueKind.Null);
+        Assert.True(auth.GetProperty("sourceKey").ValueKind == JsonValueKind.Null);
+        Assert.True(auth.GetProperty("apiKeyHeaderName").ValueKind == JsonValueKind.Null);
+        Assert.Equal(2, auth.GetProperty("usernameSourceType").GetInt32());
+        Assert.Equal("ApiUsername", auth.GetProperty("usernameSourceKey").GetString());
+        Assert.Equal(2, auth.GetProperty("passwordSourceType").GetInt32());
+        Assert.Equal("ApiPassword", auth.GetProperty("passwordSourceKey").GetString());
+        Assert.False(auth.TryGetProperty("username", out _));
+        Assert.False(auth.TryGetProperty("password", out _));
+    }
+
+    [Theory]
+    [InlineData("missing-username-source-type", "UsernameSourceType")]
+    [InlineData("missing-username-source-key", "UsernameSourceKey")]
+    [InlineData("missing-password-source-type", "PasswordSourceType")]
+    [InlineData("missing-password-source-key", "PasswordSourceKey")]
+    [InlineData("forbidden-value-source-type", "ValueSourceType")]
+    [InlineData("forbidden-source-key", "SourceKey")]
+    [InlineData("forbidden-api-key-header-name", "ApiKeyHeaderName")]
+    [InlineData("username-general-source", "UsernameSourceType")]
+    [InlineData("password-general-source", "PasswordSourceType")]
+    public async Task DataSourceAuthentication_Put_Basic_InvalidShape_ReturnsBadRequest(string scenario, string expectedErrorKey)
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var payload = new Dictionary<string, object?>
+        {
+            ["authenticationType"] = 3,
+            ["valueSourceType"] = null,
+            ["sourceKey"] = null,
+            ["apiKeyHeaderName"] = null,
+            ["usernameSourceType"] = 2,
+            ["usernameSourceKey"] = "ApiUsername",
+            ["passwordSourceType"] = 2,
+            ["passwordSourceKey"] = "ApiPassword"
+        };
+
+        switch (scenario)
+        {
+            case "missing-username-source-type":
+                payload.Remove("usernameSourceType");
+                break;
+            case "missing-username-source-key":
+                payload.Remove("usernameSourceKey");
+                break;
+            case "missing-password-source-type":
+                payload.Remove("passwordSourceType");
+                break;
+            case "missing-password-source-key":
+                payload.Remove("passwordSourceKey");
+                break;
+            case "forbidden-value-source-type":
+                payload["valueSourceType"] = 2;
+                break;
+            case "forbidden-source-key":
+                payload["sourceKey"] = "AccessToken";
+                break;
+            case "forbidden-api-key-header-name":
+                payload["apiKeyHeaderName"] = "X-Api-Key";
+                break;
+            case "username-general-source":
+                payload["usernameSourceType"] = 1;
+                break;
+            case "password-general-source":
+                payload["passwordSourceType"] = 1;
+                break;
+        }
+
+        var response = await client.PutAsJsonAsync($"/api/data-sources/{dataSourceId}/authentication", payload);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        using var problem = await ReadProblemDocumentAsync(response);
+        Assert.True(problem.RootElement.GetProperty("errors").TryGetProperty(expectedErrorKey, out _));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task DataSourceAuthentication_Put_NonBasicAuthentication_RejectsBasicFields(int authenticationType)
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["authenticationType"] = authenticationType,
+            ["valueSourceType"] = 2,
+            ["sourceKey"] = authenticationType == 1 ? "AccessToken" : "ApiKey",
+            ["apiKeyHeaderName"] = authenticationType == 2 ? "X-Api-Key" : null,
+            ["usernameSourceType"] = 2,
+            ["usernameSourceKey"] = "ApiUsername",
+            ["passwordSourceType"] = 2,
+            ["passwordSourceKey"] = "ApiPassword"
+        };
+
+        var response = await client.PutAsJsonAsync($"/api/data-sources/{dataSourceId}/authentication", payload);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        using var problem = await ReadProblemDocumentAsync(response);
+        Assert.True(problem.RootElement.GetProperty("errors").TryGetProperty("UsernameSourceType", out _));
+        Assert.True(problem.RootElement.GetProperty("errors").TryGetProperty("PasswordSourceType", out _));
+    }
+
+    [Fact]
+    public async Task DataSourceAuthentication_Put_BasicWithConflictingDataSourceAuthorizationHeader_ReturnsConflict()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "authorization", valueSourceType = 1, value = "Basic raw", sourceKey = (string?)null, isEnabled = true });
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DataSourceAuthentication_Put_BasicWithConflictingOperationAuthorizationHeader_ReturnsConflict()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PostAsJsonAsync(
+            $"/api/operations/{operationId}/headers",
+            new { key = "Authorization", valueSourceType = 1, value = "Basic raw", sourceKey = (string?)null, isEnabled = true });
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DataSourceAuthentication_Put_Basic_IgnoresDisabledAuthorizationHeaderConflict()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "Authorization", valueSourceType = 1, value = "Basic raw", sourceKey = (string?)null, isEnabled = false });
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Header_Update_EnablingAuthorizationConflictingWithStructuredBasic_ReturnsConflict()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var createHeaderResponse = await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "authorization", valueSourceType = 1, value = "Basic raw", sourceKey = (string?)null, isEnabled = false });
+
+        var createdHeader = await createHeaderResponse.Content.ReadFromJsonAsync<CreatedIdResponse>();
+        Assert.NotNull(createdHeader);
+
+        var authResponse = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        Assert.Equal(HttpStatusCode.NoContent, authResponse.StatusCode);
+
+        var enableResponse = await client.PutAsJsonAsync(
+            $"/api/headers/{createdHeader!.Id}",
+            new { key = "Authorization", valueSourceType = 1, value = "Basic raw", sourceKey = (string?)null, isEnabled = true });
+
+        Assert.Equal(HttpStatusCode.Conflict, enableResponse.StatusCode);
+    }
+
+    [Fact]
     public async Task Operation_Create_ForNonexistentDataSource_ReturnsNotFound()
     {
         using var factory = new SimpleApiTesterApiFactory();
@@ -1394,6 +1659,312 @@ public sealed class SimpleApiTesterApiIntegrationTests
     }
 
     [Fact]
+    public async Task Execute_StructuredBasic_FromVariables_UsesSecretPassword_AndDoesNotPersistAuthorizationHeader()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "ApiUsername", value = "dev-user", isEnabled = true, isSecret = false });
+
+        await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "ApiPassword", value = "dev-password", isEnabled = true, isSecret = true });
+
+        var variablesResponse = await client.GetAsync($"/api/environments/{environmentId}/variables");
+        var variables = await variablesResponse.Content.ReadFromJsonAsync<List<VariableDto>>();
+
+        Assert.NotNull(variables);
+        Assert.Contains(variables!, x => x.Key == "ApiPassword" && x.Value == "********" && x.IsSecret);
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.False(result!.HasExecutionError);
+        Assert.Single(remote.Requests);
+
+        var authorizationHeader = remote.Requests[0].Headers.Single(x => x.Key == "Authorization").Value;
+        Assert.StartsWith("Basic ", authorizationHeader, StringComparison.Ordinal);
+
+        var encoded = authorizationHeader["Basic ".Length..];
+        var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+        Assert.Equal("dev-user:dev-password", decoded);
+
+        var authResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/authentication");
+        var auth = await authResponse.Content.ReadFromJsonAsync<DataSourceAuthenticationDto>();
+        Assert.NotNull(auth);
+        Assert.Null(auth!.ValueSourceType);
+        Assert.Null(auth.SourceKey);
+        Assert.Equal("ApiUsername", auth.UsernameSourceKey);
+        Assert.Equal("ApiPassword", auth.PasswordSourceKey);
+
+        var headersResponse = await client.GetAsync($"/api/data-sources/{dataSourceId}/headers");
+        var headers = await headersResponse.Content.ReadFromJsonAsync<List<HeaderDto>>();
+        Assert.NotNull(headers);
+        Assert.Empty(headers!);
+    }
+
+    [Fact]
+    public async Task Execute_StructuredBasic_SelectedEnvironmentDeterminesCredentials()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var developmentEnvironmentId = await CreateEnvironmentAsync(client, dataSourceId, name: "Development", baseUrl: "https://dev.remote.test");
+        var productionEnvironmentId = await CreateEnvironmentAsync(client, dataSourceId, name: "Production", baseUrl: "https://prod.remote.test");
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        await client.PostAsJsonAsync($"/api/environments/{developmentEnvironmentId}/variables", new { key = "ApiUsername", value = "dev-user", isEnabled = true });
+        await client.PostAsJsonAsync($"/api/environments/{developmentEnvironmentId}/variables", new { key = "ApiPassword", value = "dev-pass", isEnabled = true, isSecret = true });
+        await client.PostAsJsonAsync($"/api/environments/{productionEnvironmentId}/variables", new { key = "ApiUsername", value = "prod-user", isEnabled = true });
+        await client.PostAsJsonAsync($"/api/environments/{productionEnvironmentId}/variables", new { key = "ApiPassword", value = "prod-pass", isEnabled = true, isSecret = true });
+
+        await ExecuteOperationAsync(client, operationId, developmentEnvironmentId);
+        await ExecuteOperationAsync(client, operationId, productionEnvironmentId);
+
+        Assert.Equal(2, remote.Requests.Count);
+
+        var devHeader = remote.Requests[0].Headers.Single(x => x.Key == "Authorization").Value;
+        var prodHeader = remote.Requests[1].Headers.Single(x => x.Key == "Authorization").Value;
+
+        Assert.Equal("dev-user:dev-pass", DecodeBasicHeader(devHeader));
+        Assert.Equal("prod-user:prod-pass", DecodeBasicHeader(prodHeader));
+    }
+
+    [Fact]
+    public async Task Execute_StructuredBasic_MixedSources_UsesVariableUsername_AndConfigurationPassword()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote, new Dictionary<string, string?>
+        {
+            ["Secrets:HrPassword"] = "config-pass"
+        });
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 3,
+                passwordSourceKey = "Secrets:HrPassword"
+            });
+
+        await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "ApiUsername", value = "mixed-user", isEnabled = true });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.False(result!.HasExecutionError);
+        Assert.Single(remote.Requests);
+        Assert.Equal("mixed-user:config-pass", DecodeBasicHeader(remote.Requests[0].Headers.Single(x => x.Key == "Authorization").Value));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("user:name")]
+    public async Task Execute_StructuredBasic_InvalidUsername_ReturnsAuthenticationResolutionError(string username)
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiUsername", value = username, isEnabled = true });
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiPassword", value = "valid-password", isEnabled = true, isSecret = true });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.True(result!.HasExecutionError);
+        Assert.Equal("AuthenticationResolutionError", result.ErrorType);
+        Assert.Equal("Unable to use Basic authentication username source 'ApiUsername'.", result.ErrorMessage);
+        Assert.DoesNotContain("valid-password", result.ErrorMessage, StringComparison.Ordinal);
+        Assert.Empty(remote.Requests);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Execute_StructuredBasic_EmptyOrWhitespacePassword_IsAllowed(string password)
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiUsername", value = "basic-user", isEnabled = true });
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiPassword", value = password, isEnabled = true, isSecret = true });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.False(result!.HasExecutionError);
+        Assert.Single(remote.Requests);
+        Assert.Equal($"basic-user:{password}", DecodeBasicHeader(remote.Requests[0].Headers.Single(x => x.Key == "Authorization").Value));
+    }
+
+    [Fact]
+    public async Task Execute_StructuredBasic_MissingPassword_ReturnsAuthenticationResolutionError()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiUsername", value = "basic-user", isEnabled = true });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.True(result!.HasExecutionError);
+        Assert.Equal("AuthenticationResolutionError", result.ErrorType);
+        Assert.Equal("Unable to resolve Basic authentication password source 'ApiPassword'.", result.ErrorMessage);
+        Assert.Empty(remote.Requests);
+    }
+
+    [Fact]
+    public async Task Execute_StructuredBasic_UsesUtf8ForUnicodeCredentials()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiUsername", value = "naïve", isEnabled = true });
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiPassword", value = "päss", isEnabled = true, isSecret = true });
+
+        await ExecuteOperationAsync(client, operationId, environmentId);
+
+        var authorizationHeader = remote.Requests.Single().Headers.Single(x => x.Key == "Authorization").Value;
+        var encoded = authorizationHeader["Basic ".Length..];
+        var expected = Convert.ToBase64String(Encoding.UTF8.GetBytes("naïve:päss"));
+
+        Assert.Equal(expected, encoded);
+    }
+
+    [Fact]
     public async Task Execute_StructuredAuthentication_BlankResolvedValue_ReturnsAuthenticationResolutionError()
     {
         using var remote = new RemoteHttpStub();
@@ -1462,6 +2033,47 @@ public sealed class SimpleApiTesterApiIntegrationTests
     }
 
     [Fact]
+    public async Task Execute_OperationAuthenticationModeNone_SuppressesStructuredBasic_ButKeepsRawHeaders()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId, authenticationMode: 2);
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 3,
+                valueSourceType = (int?)null,
+                sourceKey = (string?)null,
+                apiKeyHeaderName = (string?)null,
+                usernameSourceType = 2,
+                usernameSourceKey = "ApiUsername",
+                passwordSourceType = 2,
+                passwordSourceKey = "ApiPassword"
+            });
+
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiUsername", value = "should-not-send", isEnabled = true });
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiPassword", value = "should-not-send", isEnabled = true, isSecret = true });
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "X-Trace", valueSourceType = 1, value = "trace-1", sourceKey = (string?)null, isEnabled = true });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.False(result!.HasExecutionError);
+        Assert.Single(remote.Requests);
+        Assert.DoesNotContain(remote.Requests[0].Headers, x => x.Key == "Authorization");
+        Assert.Contains(remote.Requests[0].Headers, x => x.Key == "X-Trace" && x.Value == "trace-1");
+    }
+
+    [Fact]
     public async Task Execute_DefensiveStructuredAuthConflict_ReturnsAuthenticationConfigurationError()
     {
         using var remote = new RemoteHttpStub();
@@ -1492,6 +2104,48 @@ public sealed class SimpleApiTesterApiIntegrationTests
         Assert.True(result!.HasExecutionError);
         Assert.Equal("AuthenticationConfigurationError", result.ErrorType);
         Assert.Equal("Structured Bearer authentication conflicts with raw header 'Authorization'.", result.ErrorMessage);
+        Assert.Empty(remote.Requests);
+    }
+
+    [Fact]
+    public async Task Execute_DefensiveStructuredBasicConflict_ReturnsAuthenticationConfigurationError()
+    {
+        using var remote = new RemoteHttpStub();
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await SeedStructuredAuthenticationAsync(
+            factory,
+            new SeededAuthentication(
+                dataSourceId,
+                3,
+                null,
+                null,
+                null,
+                UsernameSourceType: 2,
+                UsernameSourceKey: "ApiUsername",
+                PasswordSourceType: 2,
+                PasswordSourceKey: "ApiPassword"));
+
+        await SeedRawDataSourceHeaderAsync(
+            factory,
+            dataSourceId,
+            new SeededHeader("authorization", 1, "Basic raw", null, true));
+
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiUsername", value = "basic-user", isEnabled = true });
+        await client.PostAsJsonAsync($"/api/environments/{environmentId}/variables", new { key = "ApiPassword", value = "basic-pass", isEnabled = true, isSecret = true });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.NotNull(result);
+        Assert.True(result!.HasExecutionError);
+        Assert.Equal("AuthenticationConfigurationError", result.ErrorType);
+        Assert.Equal("Structured Basic authentication conflicts with raw header 'Authorization'.", result.ErrorMessage);
         Assert.Empty(remote.Requests);
     }
 
@@ -1682,6 +2336,18 @@ public sealed class SimpleApiTesterApiIntegrationTests
         return await JsonDocument.ParseAsync(stream);
     }
 
+    private static async Task<JsonDocument> ReadProblemOrJsonDocumentAsync(HttpResponseMessage response)
+    {
+        var stream = await response.Content.ReadAsStreamAsync();
+        return await JsonDocument.ParseAsync(stream);
+    }
+
+    private static string DecodeBasicHeader(string authorizationHeader)
+    {
+        Assert.StartsWith("Basic ", authorizationHeader, StringComparison.Ordinal);
+        return Encoding.UTF8.GetString(Convert.FromBase64String(authorizationHeader["Basic ".Length..]));
+    }
+
     private static async Task<StoredVariableState> GetStoredVariableStateAsync(SimpleApiTesterApiFactory factory, Guid variableId)
     {
         using var scope = factory.Services.CreateScope();
@@ -1706,9 +2372,19 @@ public sealed class SimpleApiTesterApiIntegrationTests
             Id = Guid.NewGuid(),
             DataSourceId = authentication.DataSourceId,
             AuthenticationType = (SimpleApiTester.Domain.Enum.AuthenticationType)authentication.AuthenticationType,
-            ValueSourceType = (SimpleApiTester.Domain.Enum.HeaderValueSourceType)authentication.ValueSourceType,
+            ValueSourceType = authentication.ValueSourceType is null
+                ? null
+                : (SimpleApiTester.Domain.Enum.HeaderValueSourceType)authentication.ValueSourceType.Value,
             SourceKey = authentication.SourceKey,
-            ApiKeyHeaderName = authentication.ApiKeyHeaderName
+            ApiKeyHeaderName = authentication.ApiKeyHeaderName,
+            UsernameSourceType = authentication.UsernameSourceType is null
+                ? null
+                : (SimpleApiTester.Domain.Enum.HeaderValueSourceType)authentication.UsernameSourceType.Value,
+            UsernameSourceKey = authentication.UsernameSourceKey,
+            PasswordSourceType = authentication.PasswordSourceType is null
+                ? null
+                : (SimpleApiTester.Domain.Enum.HeaderValueSourceType)authentication.PasswordSourceType.Value,
+            PasswordSourceKey = authentication.PasswordSourceKey
         });
 
         await dbContext.SaveChangesAsync();
@@ -1753,9 +2429,13 @@ public sealed class SimpleApiTesterApiIntegrationTests
         Guid Id,
         Guid DataSourceId,
         int AuthenticationType,
-        int ValueSourceType,
-        string SourceKey,
-        string? ApiKeyHeaderName);
+        int? ValueSourceType,
+        string? SourceKey,
+        string? ApiKeyHeaderName,
+        int? UsernameSourceType,
+        string? UsernameSourceKey,
+        int? PasswordSourceType,
+        string? PasswordSourceKey);
 
     private sealed record QueryParameterDto(Guid Id, Guid OperationId, string Key, string? Value, bool IsEnabled);
 
@@ -1766,9 +2446,13 @@ public sealed class SimpleApiTesterApiIntegrationTests
     private sealed record SeededAuthentication(
         Guid DataSourceId,
         int AuthenticationType,
-        int ValueSourceType,
-        string SourceKey,
-        string? ApiKeyHeaderName);
+        int? ValueSourceType,
+        string? SourceKey,
+        string? ApiKeyHeaderName,
+        int? UsernameSourceType = null,
+        string? UsernameSourceKey = null,
+        int? PasswordSourceType = null,
+        string? PasswordSourceKey = null);
 
     private sealed record SeededHeader(
         string Key,

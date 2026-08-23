@@ -6,6 +6,7 @@ using SimpleApiTester.Application.Operations.Commands.ExecuteOperation;
 using SimpleApiTester.Domain.Entities;
 using SimpleApiTester.Domain.Enum;
 using SimpleApiTester.Infrastructure.Persistence;
+using System.Text;
 
 namespace SimpleApiTester.Tests.Application;
 
@@ -492,6 +493,238 @@ public sealed class ExecuteOperationCommandHandlerTests
     }
 
     [Fact]
+    public async Task Handle_WhenStructuredBasicAuthenticationIsConfigured_UsesResolvedVariableValues()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.AddRange(
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ApiUsername",
+                Value = "basic-user",
+                IsEnabled = true
+            },
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ApiPassword",
+                Value = "basic-password",
+                IsEnabled = true,
+                IsSecret = true
+            });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.Basic,
+            UsernameSourceType = HeaderValueSourceType.Variable,
+            UsernameSourceKey = "ApiUsername",
+            PasswordSourceType = HeaderValueSourceType.Variable,
+            PasswordSourceKey = "ApiPassword"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+        Assert.Equal("basic-user:basic-password", DecodeBasicHeader(executor.Request!.Headers.Single(x => x.Key == "Authorization").Value));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("bad:user")]
+    public async Task Handle_WhenStructuredBasicAuthenticationUsernameIsInvalid_ReturnsAuthenticationResolutionError(string username)
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.AddRange(
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ApiUsername",
+                Value = username,
+                IsEnabled = true
+            },
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ApiPassword",
+                Value = "password",
+                IsEnabled = true,
+                IsSecret = true
+            });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.Basic,
+            UsernameSourceType = HeaderValueSourceType.Variable,
+            UsernameSourceKey = "ApiUsername",
+            PasswordSourceType = HeaderValueSourceType.Variable,
+            PasswordSourceKey = "ApiPassword"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.True(response.HasExecutionError);
+        Assert.Equal("AuthenticationResolutionError", response.ErrorType);
+        Assert.Equal("Unable to use Basic authentication username source 'ApiUsername'.", response.ErrorMessage);
+        Assert.Null(executor.Request);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("pass:word")]
+    public async Task Handle_WhenStructuredBasicAuthenticationPasswordIsResolved_AllowsEmptyWhitespaceAndColon(string password)
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.AddRange(
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ApiUsername",
+                Value = "basic-user",
+                IsEnabled = true
+            },
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ApiPassword",
+                Value = password,
+                IsEnabled = true,
+                IsSecret = true
+            });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.Basic,
+            UsernameSourceType = HeaderValueSourceType.Variable,
+            UsernameSourceKey = "ApiUsername",
+            PasswordSourceType = HeaderValueSourceType.Variable,
+            PasswordSourceKey = "ApiPassword"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+        Assert.Equal($"basic-user:{password}", DecodeBasicHeader(executor.Request!.Headers.Single(x => x.Key == "Authorization").Value));
+    }
+
+    [Fact]
+    public async Task Handle_WhenStructuredBasicAuthenticationUsesUtf8ForUnicodeCredentials_ReturnsDeterministicHeader()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.AddRange(
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ApiUsername",
+                Value = "naïve",
+                IsEnabled = true
+            },
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ApiPassword",
+                Value = "päss",
+                IsEnabled = true,
+                IsSecret = true
+            });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.Basic,
+            UsernameSourceType = HeaderValueSourceType.Variable,
+            UsernameSourceKey = "ApiUsername",
+            PasswordSourceType = HeaderValueSourceType.Variable,
+            PasswordSourceKey = "ApiPassword"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var handler = CreateHandler(dbContext, executor);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+
+        var authorizationHeader = executor.Request!.Headers.Single(x => x.Key == "Authorization").Value;
+        var encoded = authorizationHeader["Basic ".Length..];
+        var expected = Convert.ToBase64String(Encoding.UTF8.GetBytes("naïve:päss"));
+
+        Assert.Equal(expected, encoded);
+    }
+
+    [Fact]
     public async Task Handle_WhenOperationAuthenticationModeIsNone_SkipsStructuredAuthentication()
     {
         await using var dbContext = CreateDbContext();
@@ -758,6 +991,12 @@ public sealed class ExecuteOperationCommandHandlerTests
             .Options;
 
         return new AppDbContext(options);
+    }
+
+    private static string DecodeBasicHeader(string authorizationHeader)
+    {
+        Assert.StartsWith("Basic ", authorizationHeader, StringComparison.Ordinal);
+        return Encoding.UTF8.GetString(Convert.FromBase64String(authorizationHeader["Basic ".Length..]));
     }
 
     private sealed class CapturingExecutor : IOperationRequestExecutor
