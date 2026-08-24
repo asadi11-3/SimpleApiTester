@@ -13,4 +13,10 @@ public sealed record UpsertDataSourceAuthenticationCommand(
     HeaderValueSourceType? UsernameSourceType,
     string? UsernameSourceKey,
     HeaderValueSourceType? PasswordSourceType,
-    string? PasswordSourceKey) : IRequest;
+    string? PasswordSourceKey,
+    string? OAuthTokenEndpoint,
+    HeaderValueSourceType? OAuthClientIdSourceType,
+    string? OAuthClientIdSourceKey,
+    HeaderValueSourceType? OAuthClientSecretSourceType,
+    string? OAuthClientSecretSourceKey,
+    string? OAuthScope) : IRequest;

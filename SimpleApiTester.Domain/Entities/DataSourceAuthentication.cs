@@ -26,5 +26,17 @@ public class DataSourceAuthentication
 
     public string? PasswordSourceKey { get; set; }
 
+    public string? OAuthTokenEndpoint { get; set; }
+
+    public HeaderValueSourceType? OAuthClientIdSourceType { get; set; }
+
+    public string? OAuthClientIdSourceKey { get; set; }
+
+    public HeaderValueSourceType? OAuthClientSecretSourceType { get; set; }
+
+    public string? OAuthClientSecretSourceKey { get; set; }
+
+    public string? OAuthScope { get; set; }
+
     public DataSource DataSource { get; set; } = null!;
 }

@@ -1,5 +1,6 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using SimpleApiTester.Application.Abstractions.Authentication;
 using SimpleApiTester.Application.DataSourceAuthentications;
 using SimpleApiTester.Application.Abstractions.Headers;
 using SimpleApiTester.Application.Abstractions.Http;
@@ -16,15 +17,18 @@ internal sealed class ExecuteOperationCommandHandler
 {
     private readonly IAppDbContext _dbContext;
     private readonly IExternalHeaderValueResolver _externalHeaderValueResolver;
+    private readonly IOAuthTokenClient _oauthTokenClient;
     private readonly IOperationRequestExecutor _operationRequestExecutor;
 
     public ExecuteOperationCommandHandler(
         IAppDbContext dbContext,
         IExternalHeaderValueResolver externalHeaderValueResolver,
+        IOAuthTokenClient oauthTokenClient,
         IOperationRequestExecutor operationRequestExecutor)
     {
         _dbContext = dbContext;
         _externalHeaderValueResolver = externalHeaderValueResolver;
+        _oauthTokenClient = oauthTokenClient;
         _operationRequestExecutor = operationRequestExecutor;
     }
 
@@ -98,6 +102,8 @@ internal sealed class ExecuteOperationCommandHandler
             throw new InvalidOperationException("Cannot execute an operation for an inactive environment.");
         }
 
+        var timeout = DataSourceTimeoutPolicy.Resolve(dataSource.DefaultTimeoutSeconds);
+
         var queryParameters = await _dbContext.QueryParameters
             .AsNoTracking()
             .Where(x => x.OperationId == operation.Id && x.IsEnabled)
@@ -132,7 +138,13 @@ internal sealed class ExecuteOperationCommandHandler
                     x.UsernameSourceType,
                     x.UsernameSourceKey,
                     x.PasswordSourceType,
-                    x.PasswordSourceKey))
+                    x.PasswordSourceKey,
+                    x.OAuthTokenEndpoint,
+                    x.OAuthClientIdSourceType,
+                    x.OAuthClientIdSourceKey,
+                    x.OAuthClientSecretSourceType,
+                    x.OAuthClientSecretSourceKey,
+                    x.OAuthScope))
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (authentication is not null)
@@ -170,11 +182,14 @@ internal sealed class ExecuteOperationCommandHandler
                 var resolvedAuthenticationValue = await ResolveAuthenticationValueAsync(
                     authentication,
                     rawHeaderResolution.EnabledVariables,
+                    timeout,
                     cancellationToken);
 
-                if (resolvedAuthenticationValue.ErrorMessage is not null)
+                if (resolvedAuthenticationValue.ErrorType is not null)
                 {
-                    return CreateAuthenticationResolutionErrorResponse(resolvedAuthenticationValue.ErrorMessage);
+                    return CreateExecutionErrorResponse(
+                        resolvedAuthenticationValue.ErrorType,
+                        resolvedAuthenticationValue.ErrorMessage!);
                 }
 
                 if (authentication.AuthenticationType == AuthenticationType.ApiKey
@@ -213,7 +228,7 @@ internal sealed class ExecuteOperationCommandHandler
                 operation.Body,
                 operation.ContentType,
                 finalHeaders),
-            DataSourceTimeoutPolicy.Resolve(dataSource.DefaultTimeoutSeconds),
+            timeout,
             cancellationToken);
     }
 
@@ -292,8 +307,70 @@ internal sealed class ExecuteOperationCommandHandler
     private async Task<AuthenticationValueResolutionResult> ResolveAuthenticationValueAsync(
         DataSourceAuthenticationValue authentication,
         IReadOnlyCollection<VariableValue> enabledVariables,
+        TimeSpan timeout,
         CancellationToken cancellationToken)
     {
+        if (authentication.AuthenticationType == AuthenticationType.OAuthClientCredentials)
+        {
+            if (string.IsNullOrWhiteSpace(authentication.OAuthTokenEndpoint)
+                || !DataSourceAuthenticationRules.IsValidOAuthTokenEndpoint(authentication.OAuthTokenEndpoint))
+            {
+                return new AuthenticationValueResolutionResult(
+                    null,
+                    "AuthenticationConfigurationError",
+                    DataSourceAuthenticationRules.CreateOAuthTokenEndpointConfigurationErrorMessage());
+            }
+
+            var resolvedClientId = await ResolveAuthenticationSourceValueAsync(
+                authentication.OAuthClientIdSourceType,
+                authentication.OAuthClientIdSourceKey,
+                enabledVariables,
+                cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(resolvedClientId))
+            {
+                return new AuthenticationValueResolutionResult(
+                    null,
+                    "AuthenticationResolutionError",
+                    DataSourceAuthenticationRules.CreateOAuthClientIdResolutionErrorMessage(
+                        authentication.OAuthClientIdSourceKey!));
+            }
+
+            var resolvedClientSecret = await ResolveAuthenticationSourceValueAsync(
+                authentication.OAuthClientSecretSourceType,
+                authentication.OAuthClientSecretSourceKey,
+                enabledVariables,
+                cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(resolvedClientSecret))
+            {
+                return new AuthenticationValueResolutionResult(
+                    null,
+                    "AuthenticationResolutionError",
+                    DataSourceAuthenticationRules.CreateOAuthClientSecretResolutionErrorMessage(
+                        authentication.OAuthClientSecretSourceKey!));
+            }
+
+            var tokenResult = await _oauthTokenClient.RequestClientCredentialsTokenAsync(
+                new OAuthTokenRequest(
+                    authentication.OAuthTokenEndpoint,
+                    resolvedClientId,
+                    resolvedClientSecret,
+                    authentication.OAuthScope),
+                timeout,
+                cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(tokenResult.AccessToken))
+            {
+                return new AuthenticationValueResolutionResult(
+                    null,
+                    "OAuthTokenError",
+                    tokenResult.ErrorMessage ?? "OAuth token request failed.");
+            }
+
+            return new AuthenticationValueResolutionResult($"Bearer {tokenResult.AccessToken}", null, null);
+        }
+
         if (authentication.AuthenticationType == AuthenticationType.Basic)
         {
             var resolvedUsername = await ResolveAuthenticationSourceValueAsync(
@@ -307,6 +384,7 @@ internal sealed class ExecuteOperationCommandHandler
             {
                 return new AuthenticationValueResolutionResult(
                     null,
+                    "AuthenticationResolutionError",
                     DataSourceAuthenticationRules.CreateBasicUsernameResolutionErrorMessage(
                         authentication.UsernameSourceKey!));
             }
@@ -321,6 +399,7 @@ internal sealed class ExecuteOperationCommandHandler
             {
                 return new AuthenticationValueResolutionResult(
                     null,
+                    "AuthenticationResolutionError",
                     DataSourceAuthenticationRules.CreateBasicPasswordResolutionErrorMessage(
                         authentication.PasswordSourceKey!));
             }
@@ -328,7 +407,7 @@ internal sealed class ExecuteOperationCommandHandler
             var encodedCredentials = Convert.ToBase64String(
                 Encoding.UTF8.GetBytes($"{resolvedUsername}:{resolvedPassword}"));
 
-            return new AuthenticationValueResolutionResult($"Basic {encodedCredentials}", null);
+            return new AuthenticationValueResolutionResult($"Basic {encodedCredentials}", null, null);
         }
 
         var resolvedAuthenticationValue = await ResolveAuthenticationSourceValueAsync(
@@ -341,6 +420,7 @@ internal sealed class ExecuteOperationCommandHandler
         {
             return new AuthenticationValueResolutionResult(
                 null,
+                "AuthenticationResolutionError",
                 DataSourceAuthenticationRules.CreateResolutionErrorMessage(
                     authentication.AuthenticationType,
                     authentication.SourceKey!));
@@ -350,6 +430,7 @@ internal sealed class ExecuteOperationCommandHandler
             authentication.AuthenticationType == AuthenticationType.Bearer
                 ? $"Bearer {resolvedAuthenticationValue}"
                 : resolvedAuthenticationValue,
+            null,
             null);
     }
 
@@ -424,7 +505,8 @@ internal sealed class ExecuteOperationCommandHandler
         };
     }
 
-    private static ExecuteOperationResponse CreateAuthenticationResolutionErrorResponse(
+    private static ExecuteOperationResponse CreateExecutionErrorResponse(
+        string errorType,
         string errorMessage)
         => new(
             StatusCode: null,
@@ -433,7 +515,7 @@ internal sealed class ExecuteOperationCommandHandler
             ContentType: null,
             DurationMilliseconds: 0,
             HasExecutionError: true,
-            ErrorType: "AuthenticationResolutionError",
+            ErrorType: errorType,
             ErrorMessage: errorMessage);
 
     private static ExecuteOperationResponse CreateAuthenticationConfigurationErrorResponse(
@@ -532,9 +614,16 @@ internal sealed class ExecuteOperationCommandHandler
         HeaderValueSourceType? UsernameSourceType,
         string? UsernameSourceKey,
         HeaderValueSourceType? PasswordSourceType,
-        string? PasswordSourceKey);
+        string? PasswordSourceKey,
+        string? OAuthTokenEndpoint,
+        HeaderValueSourceType? OAuthClientIdSourceType,
+        string? OAuthClientIdSourceKey,
+        HeaderValueSourceType? OAuthClientSecretSourceType,
+        string? OAuthClientSecretSourceKey,
+        string? OAuthScope);
 
     private sealed record AuthenticationValueResolutionResult(
         string? ResolvedValue,
+        string? ErrorType,
         string? ErrorMessage);
 }

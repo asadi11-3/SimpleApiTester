@@ -26,6 +26,12 @@ namespace SimpleApiTester.Infrastructure
                 client.Timeout = Timeout.InfiniteTimeSpan;
             });
 
+            services.AddHttpClient("OAuthTokenClient", client =>
+            {
+                client.Timeout = Timeout.InfiniteTimeSpan;
+            });
+
+            services.AddScoped<SimpleApiTester.Application.Abstractions.Authentication.IOAuthTokenClient, OAuthTokenClient>();
             services.AddScoped<IOperationRequestExecutor, OperationRequestExecutor>();
             services.AddScoped<IDataSourceConnectionTester, DataSourceConnectionTester>();
             services.AddScoped<IExternalHeaderValueResolver, ExternalHeaderValueResolver>();

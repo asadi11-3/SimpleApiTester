@@ -46,7 +46,13 @@ public sealed class DataSourceAuthenticationsController : ControllerBase
                 request.UsernameSourceType,
                 request.UsernameSourceKey,
                 request.PasswordSourceType,
-                request.PasswordSourceKey),
+                request.PasswordSourceKey,
+                request.OAuthTokenEndpoint,
+                request.OAuthClientIdSourceType,
+                request.OAuthClientIdSourceKey,
+                request.OAuthClientSecretSourceType,
+                request.OAuthClientSecretSourceKey,
+                request.OAuthScope),
             cancellationToken);
 
         return NoContent();

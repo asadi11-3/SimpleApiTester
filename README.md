@@ -106,8 +106,10 @@ SimpleApiTester is intentionally not a full Postman replacement.
   - `Basic`
   - `ApiKey` in header
   - `ApiKey` in query string
+  - `OAuth 2.0 Client Credentials`
 - not supported:
-  - OAuth or token refresh
+  - OAuth authorization code / PKCE / interactive login
+  - refresh tokens
 - auth values can resolve from:
   - selected-environment `Variable`
   - `UserSecret`
@@ -117,7 +119,9 @@ SimpleApiTester is intentionally not a full Postman replacement.
   - `Bearer` uses `AuthenticationType`, `ValueSourceType`, `SourceKey`
   - `Basic` uses `AuthenticationType`, `UsernameSourceType`, `UsernameSourceKey`, `PasswordSourceType`, `PasswordSourceKey`
   - `ApiKey` uses `AuthenticationType`, `ValueSourceType`, `SourceKey`, `ApiKeyLocation`, `ApiKeyHeaderName`
+  - `OAuth 2.0 Client Credentials` uses `AuthenticationType`, `OAuthTokenEndpoint`, `OAuthClientIdSourceType`, `OAuthClientIdSourceKey`, `OAuthClientSecretSourceType`, `OAuthClientSecretSourceKey`, and optional `OAuthScope`
 - `Basic` credentials are generated only during execution as `Authorization: Basic <base64(username:password)>`
+- OAuth client-credentials access tokens are acquired only during execution and are not persisted
 - `ApiKeyHeaderName` remains the single API-key name field for backward compatibility:
   - in header mode it is the HTTP header name
   - in query mode it is the query-parameter key
@@ -140,6 +144,7 @@ When structured authentication exists, enabled raw headers cannot conflict with 
 - structured `Bearer` conflicts with enabled raw `Authorization`
 - structured `Basic` conflicts with enabled raw `Authorization`
 - structured `ApiKey` conflicts with enabled raw header matching `ApiKeyHeaderName`
+- structured `OAuth 2.0 Client Credentials` conflicts with enabled raw `Authorization`
 - conflicts are case-insensitive and execution fails rather than silently overriding
 
 When structured `ApiKey` uses query mode, enabled raw query parameters cannot conflict with its exact query key:
@@ -164,6 +169,7 @@ When an operation is executed, the application:
 - uses the real stored variable value even when the variable is marked secret
 - if `Operation.AuthenticationMode == Inherit`, optionally resolves structured data-source authentication
 - rejects structured-auth/raw-header and structured-auth/raw-query conflicts before sending HTTP
+- for OAuth client credentials, first posts `application/x-www-form-urlencoded` token request metadata to the configured HTTPS token endpoint
 - adds either `Authorization: Bearer <value>`, `Authorization: Basic <base64(username:password)>`, `<ApiKeyHeaderName>: <value>`, or `?ApiKeyHeaderName=<value>` when structured authentication resolves successfully
 - sends the request through `IHttpClientFactory`
 - returns remote HTTP responses, including non-2xx results, as normal execution results
@@ -175,7 +181,7 @@ If header resolution fails, the outbound HTTP call is not sent and the execution
 
 If structured authentication cannot resolve or conflicts with raw headers, the outbound HTTP call is not sent and the execution result reports:
 - `HasExecutionError = true`
-- `ErrorType = "AuthenticationResolutionError"` or `"AuthenticationConfigurationError"`
+- `ErrorType = "AuthenticationResolutionError"`, `"AuthenticationConfigurationError"`, or `"OAuthTokenError"`
 
 `ContentType` belongs to the `Operation`, not to headers.
 
@@ -226,6 +232,17 @@ ApiKey query example:
 - `Production` environment variable: `CatalogApiKey = fake-prod-key-456`
 
 Executing the same operation with different environments adds the API key to the final request URL at execution time only, for example `?api_key=fake-dev-key-123`. The generated query contribution is not stored as a `QueryParameter` record.
+
+OAuth client-credentials example:
+- `CRM API` data source authentication: `OAuth 2.0 Client Credentials`
+- token endpoint: `https://identity.example.com/oauth/token`
+- client ID source: `Variable -> OAuthClientId`
+- client secret source: `Variable -> OAuthClientSecret`
+- optional scope: `crm.read crm.write`
+- `Development` environment variables: `OAuthClientId = fake-dev-client`, `OAuthClientSecret = fake-dev-secret`
+- `Production` environment variables: `OAuthClientId = fake-prod-client`, `OAuthClientSecret = fake-prod-secret`
+
+When `AuthenticationMode = Inherit`, the application requests a token during execution, reads `access_token` from the token response, and sends the target request with `Authorization: Bearer <access_token>`. The token request uses the selected environment's variable values, the target request is sent only after token acquisition succeeds, and the acquired token is not persisted.
 
 ## Test Connection
 The API also supports a lightweight connectivity check for a selected data source environment.
@@ -361,7 +378,7 @@ This project intentionally does not include:
 - data-source-level variables
 - default environment selection
 - variable substitution in endpoints, bodies, or query parameters
-- auth frameworks or OAuth flows
+- interactive auth frameworks beyond OAuth 2.0 client credentials
 - request history
 - collections/workspaces
 - UI

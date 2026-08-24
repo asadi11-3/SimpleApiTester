@@ -32,7 +32,13 @@ internal sealed class GetDataSourceAuthenticationQueryHandler
                 x.UsernameSourceType,
                 x.UsernameSourceKey,
                 x.PasswordSourceType,
-                x.PasswordSourceKey))
+                x.PasswordSourceKey,
+                x.OAuthTokenEndpoint,
+                x.OAuthClientIdSourceType,
+                x.OAuthClientIdSourceKey,
+                x.OAuthClientSecretSourceType,
+                x.OAuthClientSecretSourceKey,
+                x.OAuthScope))
             .FirstOrDefaultAsync(cancellationToken);
 
         if (authentication is null)

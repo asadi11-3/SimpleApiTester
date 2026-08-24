@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SimpleApiTester.Application.Abstractions.Authentication;
 using SimpleApiTester.Application.Abstractions.Headers;
 using SimpleApiTester.Application.Abstractions.Http;
 using SimpleApiTester.Application.DataSources;
@@ -328,7 +329,7 @@ public sealed class ExecuteOperationCommandHandlerTests
             });
 
         var executor = new CapturingExecutor();
-        var handler = new ExecuteOperationCommandHandler(dbContext, resolver, executor);
+        var handler = new ExecuteOperationCommandHandler(dbContext, resolver, new StubOAuthTokenClient(), executor);
 
         await handler.Handle(new ExecuteOperationCommand(operationId, developmentEnvironmentId), CancellationToken.None);
 
@@ -768,6 +769,197 @@ public sealed class ExecuteOperationCommandHandlerTests
     }
 
     [Fact]
+    public async Task Handle_WhenStructuredOAuthClientCredentialsAuthenticationSucceeds_AddsBearerHeader()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId, defaultTimeoutSeconds: 12);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.AddRange(
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ClientId",
+                Value = "client-id",
+                IsEnabled = true
+            },
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ClientSecret",
+                Value = "client-secret",
+                IsEnabled = true,
+                IsSecret = true
+            });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.OAuthClientCredentials,
+            OAuthTokenEndpoint = "https://identity.example.com/oauth/token",
+            OAuthClientIdSourceType = HeaderValueSourceType.Variable,
+            OAuthClientIdSourceKey = "ClientId",
+            OAuthClientSecretSourceType = HeaderValueSourceType.Variable,
+            OAuthClientSecretSourceKey = "ClientSecret",
+            OAuthScope = "read write"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var tokenClient = new StubOAuthTokenClient
+        {
+            ResultFactory = _ => new OAuthTokenClientResult("token-123", null)
+        };
+        var handler = CreateHandler(dbContext, executor, tokenClient: tokenClient);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+        Assert.Contains(executor.Request!.Headers, x => x.Key == "Authorization" && x.Value == "Bearer token-123");
+        Assert.NotNull(tokenClient.LastRequest);
+        Assert.Equal("https://identity.example.com/oauth/token", tokenClient.LastRequest!.TokenEndpoint);
+        Assert.Equal("client-id", tokenClient.LastRequest.ClientId);
+        Assert.Equal("client-secret", tokenClient.LastRequest.ClientSecret);
+        Assert.Equal("read write", tokenClient.LastRequest.Scope);
+        Assert.Equal(TimeSpan.FromSeconds(12), tokenClient.LastTimeout);
+    }
+
+    [Fact]
+    public async Task Handle_WhenOAuthTokenRequestFails_ReturnsOAuthTokenError()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.Inherit);
+
+        dbContext.Variables.AddRange(
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ClientId",
+                Value = "client-id",
+                IsEnabled = true
+            },
+            new Variable
+            {
+                Id = Guid.NewGuid(),
+                DataSourceEnvironmentId = environmentId,
+                Key = "ClientSecret",
+                Value = "client-secret",
+                IsEnabled = true
+            });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.OAuthClientCredentials,
+            OAuthTokenEndpoint = "https://identity.example.com/oauth/token",
+            OAuthClientIdSourceType = HeaderValueSourceType.Variable,
+            OAuthClientIdSourceKey = "ClientId",
+            OAuthClientSecretSourceType = HeaderValueSourceType.Variable,
+            OAuthClientSecretSourceKey = "ClientSecret"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var tokenClient = new StubOAuthTokenClient
+        {
+            ResultFactory = _ => new OAuthTokenClientResult(null, "OAuth token request returned HTTP 401.")
+        };
+        var handler = CreateHandler(dbContext, executor, tokenClient: tokenClient);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.True(response.HasExecutionError);
+        Assert.Equal("OAuthTokenError", response.ErrorType);
+        Assert.Equal("OAuth token request returned HTTP 401.", response.ErrorMessage);
+        Assert.Null(executor.Request);
+    }
+
+    [Fact]
+    public async Task Handle_WhenOperationAuthenticationModeIsNone_SkipsStructuredOAuthAuthentication_ButKeepsRawHeadersAndQueryParameters()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var dataSourceId = Guid.NewGuid();
+        var environmentId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        SeedDataSource(dbContext, dataSourceId);
+        SeedEnvironment(dbContext, environmentId, dataSourceId, baseUrl: "https://example.com");
+        SeedOperation(dbContext, operationId, dataSourceId, authenticationMode: OperationAuthenticationMode.None);
+
+        dbContext.QueryParameters.Add(new QueryParameter
+        {
+            Id = Guid.NewGuid(),
+            OperationId = operationId,
+            Key = "page",
+            Value = "2",
+            IsEnabled = true
+        });
+
+        dbContext.Headers.Add(new Header
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            Key = "X-Trace",
+            ValueSourceType = HeaderValueSourceType.General,
+            Value = "trace-1",
+            IsEnabled = true
+        });
+
+        dbContext.DataSourceAuthentications.Add(new DataSourceAuthentication
+        {
+            Id = Guid.NewGuid(),
+            DataSourceId = dataSourceId,
+            AuthenticationType = AuthenticationType.OAuthClientCredentials,
+            OAuthTokenEndpoint = "https://identity.example.com/oauth/token",
+            OAuthClientIdSourceType = HeaderValueSourceType.Variable,
+            OAuthClientIdSourceKey = "ClientId",
+            OAuthClientSecretSourceType = HeaderValueSourceType.Variable,
+            OAuthClientSecretSourceKey = "ClientSecret",
+            OAuthScope = "read"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var executor = new CapturingExecutor();
+        var tokenClient = new StubOAuthTokenClient
+        {
+            ResultFactory = _ => new OAuthTokenClientResult("unexpected-token", null)
+        };
+        var handler = CreateHandler(dbContext, executor, tokenClient: tokenClient);
+
+        var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
+
+        Assert.False(response.HasExecutionError);
+        Assert.NotNull(executor.Request);
+        Assert.Equal("https://example.com/posts?page=2", executor.Request!.Url);
+        Assert.Contains(executor.Request.Headers, x => x.Key == "X-Trace" && x.Value == "trace-1");
+        Assert.DoesNotContain(executor.Request.Headers, x => x.Key == "Authorization");
+        Assert.Null(tokenClient.LastRequest);
+    }
+
+    [Fact]
     public async Task Handle_WhenStructuredAuthenticationConflictsWithRawHeader_ReturnsAuthenticationConfigurationError()
     {
         await using var dbContext = CreateDbContext();
@@ -882,7 +1074,7 @@ public sealed class ExecuteOperationCommandHandlerTests
             });
 
         var executor = new CapturingExecutor();
-        var handler = new ExecuteOperationCommandHandler(dbContext, resolver, executor);
+        var handler = new ExecuteOperationCommandHandler(dbContext, resolver, new StubOAuthTokenClient(), executor);
 
         var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
 
@@ -1094,7 +1286,7 @@ public sealed class ExecuteOperationCommandHandlerTests
             });
 
         var executor = new CapturingExecutor();
-        var handler = new ExecuteOperationCommandHandler(dbContext, resolver, executor);
+        var handler = new ExecuteOperationCommandHandler(dbContext, resolver, new StubOAuthTokenClient(), executor);
 
         var response = await handler.Handle(new ExecuteOperationCommand(operationId, environmentId), CancellationToken.None);
 
@@ -1240,8 +1432,16 @@ public sealed class ExecuteOperationCommandHandlerTests
         Assert.Null(executor.Request.ContentType);
     }
 
-    private static ExecuteOperationCommandHandler CreateHandler(AppDbContext dbContext, CapturingExecutor executor)
-        => new(dbContext, new StubExternalHeaderValueResolver(), executor);
+    private static ExecuteOperationCommandHandler CreateHandler(
+        AppDbContext dbContext,
+        CapturingExecutor executor,
+        StubExternalHeaderValueResolver? resolver = null,
+        StubOAuthTokenClient? tokenClient = null)
+        => new(
+            dbContext,
+            resolver ?? new StubExternalHeaderValueResolver(),
+            tokenClient ?? new StubOAuthTokenClient(),
+            executor);
 
     private static void SeedDataSource(
         AppDbContext dbContext,
@@ -1365,6 +1565,26 @@ public sealed class ExecuteOperationCommandHandlerTests
             };
 
             return Task.FromResult(value);
+        }
+    }
+
+    private sealed class StubOAuthTokenClient : IOAuthTokenClient
+    {
+        public OAuthTokenRequest? LastRequest { get; private set; }
+
+        public TimeSpan? LastTimeout { get; private set; }
+
+        public Func<OAuthTokenRequest, OAuthTokenClientResult> ResultFactory { get; set; }
+            = _ => new OAuthTokenClientResult(null, "OAuth token request was not configured for this test.");
+
+        public Task<OAuthTokenClientResult> RequestClientCredentialsTokenAsync(
+            OAuthTokenRequest request,
+            TimeSpan timeout,
+            CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            LastTimeout = timeout;
+            return Task.FromResult(ResultFactory(request));
         }
     }
 }

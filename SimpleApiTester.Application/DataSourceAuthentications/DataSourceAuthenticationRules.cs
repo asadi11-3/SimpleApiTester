@@ -38,6 +38,32 @@ internal static class DataSourceAuthenticationRules
     public static ApiKeyLocation NormalizeApiKeyLocation(ApiKeyLocation? apiKeyLocation)
         => apiKeyLocation ?? ApiKeyLocation.Header;
 
+    public static string? NormalizeOAuthTokenEndpoint(string? tokenEndpoint)
+    {
+        if (tokenEndpoint is null)
+        {
+            return null;
+        }
+
+        var trimmed = tokenEndpoint.Trim();
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    public static string? NormalizeOAuthScope(string? scope)
+    {
+        if (scope is null)
+        {
+            return null;
+        }
+
+        var trimmed = scope.Trim();
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    public static bool IsValidOAuthTokenEndpoint(string tokenEndpoint)
+        => Uri.TryCreate(tokenEndpoint, UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps;
+
     public static bool IsDisallowedApiKeyHeaderName(string headerName)
         => HeaderRules.IsReservedHeaderKey(headerName)
             || string.Equals(headerName.Trim(), "Authorization", StringComparison.OrdinalIgnoreCase);
@@ -51,7 +77,7 @@ internal static class DataSourceAuthenticationRules
         string? apiKeyHeaderName)
         => authenticationType switch
         {
-            AuthenticationType.Bearer or AuthenticationType.Basic => "Authorization",
+            AuthenticationType.Bearer or AuthenticationType.Basic or AuthenticationType.OAuthClientCredentials => "Authorization",
             AuthenticationType.ApiKey when NormalizeApiKeyLocation(apiKeyLocation) == ApiKeyLocation.Header => apiKeyHeaderName!,
             _ => null
         };
@@ -99,6 +125,15 @@ internal static class DataSourceAuthenticationRules
             _ => $"Unable to resolve {GetAuthenticationDisplayName(authenticationType)} authentication source '{sourceKey}'."
         };
 
+    public static string CreateOAuthClientIdResolutionErrorMessage(string sourceKey)
+        => $"Unable to resolve OAuth client ID source '{sourceKey}'.";
+
+    public static string CreateOAuthClientSecretResolutionErrorMessage(string sourceKey)
+        => $"Unable to resolve OAuth client secret source '{sourceKey}'.";
+
+    public static string CreateOAuthTokenEndpointConfigurationErrorMessage()
+        => "OAuth token endpoint must be an absolute HTTPS URL.";
+
     public static string CreateBasicUsernameResolutionErrorMessage(string sourceKey)
         => $"Unable to use Basic authentication username source '{sourceKey}'.";
 
@@ -111,6 +146,7 @@ internal static class DataSourceAuthenticationRules
             AuthenticationType.Bearer => "Bearer",
             AuthenticationType.ApiKey => "API key",
             AuthenticationType.Basic => "Basic",
+            AuthenticationType.OAuthClientCredentials => "OAuth client credentials",
             _ => "structured"
         };
 }

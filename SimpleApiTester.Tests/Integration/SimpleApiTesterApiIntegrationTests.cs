@@ -729,6 +729,70 @@ public sealed class SimpleApiTesterApiIntegrationTests
     }
 
     [Fact]
+    public async Task DataSourceAuthentication_Put_OAuthClientCredentials_Get_ReturnsMetadataOnly()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        var putResponse = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 4,
+                oauthTokenEndpoint = "https://identity.example.com/oauth/token",
+                oauthClientIdSourceType = 2,
+                oauthClientIdSourceKey = "ClientId",
+                oauthClientSecretSourceType = 2,
+                oauthClientSecretSourceKey = "ClientSecret",
+                oauthScope = "read write"
+            });
+
+        Assert.Equal(HttpStatusCode.NoContent, putResponse.StatusCode);
+
+        var auth = await client.GetFromJsonAsync<DataSourceAuthenticationDto>($"/api/data-sources/{dataSourceId}/authentication");
+
+        Assert.NotNull(auth);
+        Assert.Equal(4, auth!.AuthenticationType);
+        Assert.Equal("https://identity.example.com/oauth/token", auth.OAuthTokenEndpoint);
+        Assert.Equal(2, auth.OAuthClientIdSourceType);
+        Assert.Equal("ClientId", auth.OAuthClientIdSourceKey);
+        Assert.Equal(2, auth.OAuthClientSecretSourceType);
+        Assert.Equal("ClientSecret", auth.OAuthClientSecretSourceKey);
+        Assert.Equal("read write", auth.OAuthScope);
+        Assert.Null(auth.ApiKeyHeaderName);
+        Assert.Null(auth.UsernameSourceKey);
+    }
+
+    [Fact]
+    public async Task DataSourceAuthentication_Put_OAuthClientCredentials_WithConflictingRawAuthorizationHeader_ReturnsConflict()
+    {
+        using var factory = new SimpleApiTesterApiFactory();
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+
+        await client.PostAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/headers",
+            new { key = "Authorization", valueSourceType = 1, value = "Bearer raw", sourceKey = (string?)null, isEnabled = true });
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 4,
+                oauthTokenEndpoint = "https://identity.example.com/oauth/token",
+                oauthClientIdSourceType = 2,
+                oauthClientIdSourceKey = "ClientId",
+                oauthClientSecretSourceType = 2,
+                oauthClientSecretSourceKey = "ClientSecret"
+            });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
     public async Task DataSourceAuthentication_Put_ApiKeyQuery_IgnoresDisabledAndCaseDifferentQueryParameters()
     {
         using var factory = new SimpleApiTesterApiFactory();
@@ -1771,6 +1835,132 @@ public sealed class SimpleApiTesterApiIntegrationTests
     }
 
     [Fact]
+    public async Task Execute_StructuredOAuthClientCredentials_AcquiresToken_AndSendsBearerHeader()
+    {
+        using var remote = new RemoteHttpStub
+        {
+            Responder = request =>
+            {
+                if (request.Url == "https://identity.example.com/oauth/token")
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("{\"access_token\":\"oauth-token-123\",\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json")
+                    });
+                }
+
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("ok", Encoding.UTF8, "text/plain")
+                });
+            }
+        };
+
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "ClientId", value = "client id", isEnabled = true, isSecret = false });
+        await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "ClientSecret", value = "secret+value&x=y", isEnabled = true, isSecret = true });
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 4,
+                oauthTokenEndpoint = "https://identity.example.com/oauth/token",
+                oauthClientIdSourceType = 2,
+                oauthClientIdSourceKey = "ClientId",
+                oauthClientSecretSourceType = 2,
+                oauthClientSecretSourceKey = "ClientSecret",
+                oauthScope = "read write"
+            });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(result);
+        Assert.False(result!.HasExecutionError);
+        Assert.Equal(2, remote.Requests.Count);
+
+        var tokenRequest = remote.Requests[0];
+        var targetRequest = remote.Requests[1];
+        var form = ParseFormUrlEncoded(tokenRequest.Body!);
+
+        Assert.Equal(HttpMethod.Post, tokenRequest.Method);
+        Assert.Equal("https://identity.example.com/oauth/token", tokenRequest.Url);
+        Assert.Equal("application/x-www-form-urlencoded", tokenRequest.ContentType);
+        Assert.Equal("client_credentials", form["grant_type"]);
+        Assert.Equal("client id", form["client_id"]);
+        Assert.Equal("secret+value&x=y", form["client_secret"]);
+        Assert.Equal("read write", form["scope"]);
+        Assert.Equal("https://remote.test/posts", targetRequest.Url);
+        Assert.Contains(targetRequest.Headers, x => string.Equals(x.Key, "Authorization", StringComparison.OrdinalIgnoreCase) && x.Value == "Bearer oauth-token-123");
+    }
+
+    [Fact]
+    public async Task Execute_StructuredOAuthClientCredentials_WhenTokenEndpointReturns401_ReturnsOAuthTokenError_AndSkipsTargetCall()
+    {
+        using var remote = new RemoteHttpStub
+        {
+            Responder = request =>
+            {
+                if (request.Url == "https://identity.example.com/oauth/token")
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+                }
+
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            }
+        };
+
+        using var factory = new SimpleApiTesterApiFactory(remote);
+        using var client = factory.CreateApiClient();
+
+        var dataSourceId = await CreateDataSourceAsync(client);
+        var environmentId = await CreateEnvironmentAsync(client, dataSourceId);
+        var operationId = await CreateOperationAsync(client, dataSourceId);
+
+        await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "ClientId", value = "client-id", isEnabled = true, isSecret = false });
+        await client.PostAsJsonAsync(
+            $"/api/environments/{environmentId}/variables",
+            new { key = "ClientSecret", value = "client-secret", isEnabled = true, isSecret = true });
+
+        await client.PutAsJsonAsync(
+            $"/api/data-sources/{dataSourceId}/authentication",
+            new
+            {
+                authenticationType = 4,
+                oauthTokenEndpoint = "https://identity.example.com/oauth/token",
+                oauthClientIdSourceType = 2,
+                oauthClientIdSourceKey = "ClientId",
+                oauthClientSecretSourceType = 2,
+                oauthClientSecretSourceKey = "ClientSecret"
+            });
+
+        var response = await ExecuteOperationAsync(client, operationId, environmentId);
+        var result = await response.Content.ReadFromJsonAsync<ExecuteOperationDto>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(result);
+        Assert.True(result!.HasExecutionError);
+        Assert.Equal("OAuthTokenError", result.ErrorType);
+        Assert.Equal("OAuth token request returned HTTP 401.", result.ErrorMessage);
+        Assert.Single(remote.Requests);
+        Assert.Equal("https://identity.example.com/oauth/token", remote.Requests[0].Url);
+    }
+
+    [Fact]
     public async Task Execute_InactiveDataSource_ReturnsConflictProblemDetails()
     {
         using var factory = new SimpleApiTesterApiFactory();
@@ -2799,7 +2989,17 @@ public sealed class SimpleApiTesterApiIntegrationTests
             PasswordSourceType = authentication.PasswordSourceType is null
                 ? null
                 : (SimpleApiTester.Domain.Enum.HeaderValueSourceType)authentication.PasswordSourceType.Value,
-            PasswordSourceKey = authentication.PasswordSourceKey
+            PasswordSourceKey = authentication.PasswordSourceKey,
+            OAuthTokenEndpoint = authentication.OAuthTokenEndpoint,
+            OAuthClientIdSourceType = authentication.OAuthClientIdSourceType is null
+                ? null
+                : (SimpleApiTester.Domain.Enum.HeaderValueSourceType)authentication.OAuthClientIdSourceType.Value,
+            OAuthClientIdSourceKey = authentication.OAuthClientIdSourceKey,
+            OAuthClientSecretSourceType = authentication.OAuthClientSecretSourceType is null
+                ? null
+                : (SimpleApiTester.Domain.Enum.HeaderValueSourceType)authentication.OAuthClientSecretSourceType.Value,
+            OAuthClientSecretSourceKey = authentication.OAuthClientSecretSourceKey,
+            OAuthScope = authentication.OAuthScope
         });
 
         await dbContext.SaveChangesAsync();
@@ -2873,7 +3073,13 @@ public sealed class SimpleApiTesterApiIntegrationTests
         int? UsernameSourceType,
         string? UsernameSourceKey,
         int? PasswordSourceType,
-        string? PasswordSourceKey);
+        string? PasswordSourceKey,
+        string? OAuthTokenEndpoint,
+        int? OAuthClientIdSourceType,
+        string? OAuthClientIdSourceKey,
+        int? OAuthClientSecretSourceType,
+        string? OAuthClientSecretSourceKey,
+        string? OAuthScope);
 
     private sealed record QueryParameterDto(Guid Id, Guid OperationId, string Key, string? Value, bool IsEnabled);
 
@@ -2891,7 +3097,13 @@ public sealed class SimpleApiTesterApiIntegrationTests
         int? UsernameSourceType = null,
         string? UsernameSourceKey = null,
         int? PasswordSourceType = null,
-        string? PasswordSourceKey = null);
+        string? PasswordSourceKey = null,
+        string? OAuthTokenEndpoint = null,
+        int? OAuthClientIdSourceType = null,
+        string? OAuthClientIdSourceKey = null,
+        int? OAuthClientSecretSourceType = null,
+        string? OAuthClientSecretSourceKey = null,
+        string? OAuthScope = null);
 
     private sealed record SeededHeader(
         string Key,
@@ -3069,4 +3281,14 @@ public sealed class SimpleApiTesterApiIntegrationTests
         {
         }
     }
+
+    private static IReadOnlyDictionary<string, string> ParseFormUrlEncoded(string body)
+        => body.Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2))
+            .ToDictionary(
+                part => Uri.UnescapeDataString(part[0].Replace("+", " ")),
+                part => part.Length > 1
+                    ? Uri.UnescapeDataString(part[1].Replace("+", " "))
+                    : string.Empty,
+                StringComparer.Ordinal);
 }
