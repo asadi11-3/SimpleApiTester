@@ -26,10 +26,6 @@ namespace SimpleApiTester.Infrastructure.Persistence.Configurations
             builder.Property(x => x.IsActive)
                 .IsRequired();
 
-            builder.ToTable(t => t.HasCheckConstraint(
-                "CK_DataSources_DefaultTimeoutSeconds_Range",
-                "[DefaultTimeoutSeconds] IS NULL OR ([DefaultTimeoutSeconds] >= 1 AND [DefaultTimeoutSeconds] <= 300)"));
-
             builder.HasOne(x => x.Authentication)
                 .WithOne(x => x.DataSource)
                 .HasForeignKey<DataSourceAuthentication>(x => x.DataSourceId)

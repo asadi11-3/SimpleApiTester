@@ -12,7 +12,6 @@ public sealed class DataSourceEnvironmentConfiguration : IEntityTypeConfiguratio
 
         builder.Property(x => x.Name)
             .HasMaxLength(100)
-            .UseCollation("SQL_Latin1_General_CP1_CI_AS")
             .IsRequired();
 
         builder.Property(x => x.BaseUrl)

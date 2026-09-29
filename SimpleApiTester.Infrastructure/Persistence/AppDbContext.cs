@@ -33,6 +33,8 @@ namespace SimpleApiTester.Infrastructure.Persistence
         {
             modelBuilder.ApplyConfigurationsFromAssembly(
                 typeof(AppDbContext).Assembly);
+
+            modelBuilder.ApplyProviderSpecificConfiguration(Database.ProviderName);
         }
     }
 }

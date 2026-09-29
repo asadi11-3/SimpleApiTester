@@ -12,6 +12,14 @@ namespace SimpleApiTester.Infrastructure
 {
     public static class DependencyInjection
     {
+        private const string DefaultConnectionName = "DefaultConnection";
+
+        private enum DatabaseProvider
+        {
+            SqlServer,
+            PostgreSql
+        }
+
         public static IServiceCollection AddInfrastructure(
             this IServiceCollection services,
             IConfiguration configuration)
@@ -36,9 +44,41 @@ namespace SimpleApiTester.Infrastructure
             services.AddScoped<IDataSourceConnectionTester, DataSourceConnectionTester>();
             services.AddScoped<IExternalHeaderValueResolver, ExternalHeaderValueResolver>();
 
+            var connectionString = configuration.GetConnectionString(DefaultConnectionName);
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    $"Connection string '{DefaultConnectionName}' is required.");
+            }
+
+            var providerName = configuration["Database:Provider"]
+                ?? nameof(DatabaseProvider.SqlServer);
+
+            if (!Enum.TryParse<DatabaseProvider>(providerName, true, out var provider))
+            {
+                throw new InvalidOperationException(
+                    $"Unsupported database provider '{providerName}'. " +
+                    $"Supported values are {nameof(DatabaseProvider.SqlServer)} and {nameof(DatabaseProvider.PostgreSql)}.");
+            }
+
             services.AddDbContext<AppDbContext>(options =>
-                options.UseSqlServer(
-                    configuration.GetConnectionString("DefaultConnection")));
+            {
+                switch (provider)
+                {
+                    case DatabaseProvider.SqlServer:
+                        options.UseSqlServer(connectionString);
+                        break;
+                    case DatabaseProvider.PostgreSql:
+                        options.UseNpgsql(
+                            connectionString,
+                            npgsql => npgsql.MigrationsAssembly(
+                                "SimpleApiTester.Infrastructure.PostgreSqlMigrations"));
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(provider), provider, null);
+                }
+            });
 
             services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 

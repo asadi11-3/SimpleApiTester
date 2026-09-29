@@ -28,8 +28,7 @@ namespace SimpleApiTester.Infrastructure.Persistence.Configurations
                 .HasMaxLength(20)
                 .IsRequired();
 
-            builder.Property(x => x.Body)
-                .HasColumnType("nvarchar(max)");
+            builder.Property(x => x.Body);
 
             builder.Property(x => x.ContentType)
                 .HasMaxLength(200);

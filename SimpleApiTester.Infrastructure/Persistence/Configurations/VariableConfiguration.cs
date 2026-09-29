@@ -12,7 +12,6 @@ public sealed class VariableConfiguration : IEntityTypeConfiguration<Variable>
 
         builder.Property(x => x.Key)
             .HasMaxLength(100)
-            .UseCollation("SQL_Latin1_General_CP1_CI_AS")
             .IsRequired();
 
         builder.Property(x => x.Value)
